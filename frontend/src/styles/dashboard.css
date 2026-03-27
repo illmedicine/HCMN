@@ -272,12 +272,11 @@ body {
 }
 
 .csi-card h3 {
-  font-size: 0.9rem;
+  font-size: 0.75rem;
   margin-bottom: 0.75rem;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-size: 0.75rem;
 }
 
 .presence-indicator {

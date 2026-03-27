@@ -84,7 +84,9 @@ def lowpass_filter(signal: np.ndarray, cutoff_ratio: float = 0.1) -> np.ndarray:
     """Apply a simple frequency-domain low-pass filter.
 
     *cutoff_ratio* is the fraction of the Nyquist frequency to keep.
+    Must satisfy 0 < cutoff_ratio < 0.5.
     """
+    cutoff_ratio = max(0.01, min(cutoff_ratio, 0.49))
     spectrum = np.fft.fft(signal)
     n = len(spectrum)
     cutoff = max(1, int(n * cutoff_ratio))

@@ -94,6 +94,11 @@ class SDRService:
         end = end_freq or self._settings.sdr_freq_max
         step_hz = step or self._settings.sdr_sweep_step
 
+        if step_hz <= 0:
+            raise ValueError("step must be positive")
+        if start >= end:
+            raise ValueError("start_freq must be less than end_freq")
+
         samples: list[RFSample] = []
         now = time.time()
         freq = start
