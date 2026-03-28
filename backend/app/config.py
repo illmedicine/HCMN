@@ -18,6 +18,26 @@ class Settings(BaseSettings):
     openweather_api_key: str = ""
     windy_api_key: str = ""
 
+    # Module 2 – Tracking / Satellite / GPS
+    google_maps_api_key: str = ""
+    opensky_base_url: str = "https://opensky-network.org/api"
+    opensky_username: str = ""
+    opensky_password: str = ""
+    ais_api_key: str = ""  # MarineTraffic / VesselFinder
+    ais_base_url: str = "https://services.marinetraffic.com/api"
+    faa_swim_url: str = "https://nas-b.faa.gov"
+    nasa_api_key: str = "DEMO_KEY"
+    nasa_api_base_url: str = "https://api.nasa.gov"
+    crime_api_base_url: str = "https://api.crimeometer.com/v1"
+    crime_api_key: str = ""
+    n2yo_api_key: str = ""  # Satellite tracking (Starlink, ISS)
+    n2yo_base_url: str = "https://api.n2yo.com/rest/v1/satellite"
+
+    # AI Chat (OpenAI-compatible)
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+
     # SDR configuration
     sdr_enabled: bool = False
     sdr_device_index: int = 0
@@ -35,6 +55,9 @@ class Settings(BaseSettings):
     csi_pca_components: int = 10
     csi_fft_window_size: int = 256
     csi_model_path: str = "models/csi_classifier.h5"
+    router_ip: str = "192.168.1.1"
+    router_admin_user: str = "admin"
+    router_admin_password: str = ""
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]

@@ -100,10 +100,12 @@ export default function SpectrumPanel() {
   }
 
   return (
-    <div>
-      <div className="section-title">
-        <span className="icon">📡</span>
-        SDR RF Spectrum Visualisation
+    <div className="module-panel">
+      <div className="module-header">
+        <div className="module-title">
+          <span className="module-icon">📡</span>
+          <h2>SDR RF Spectrum Analyser</h2>
+        </div>
       </div>
 
       <div className="spectrum-panel">

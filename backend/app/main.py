@@ -1,8 +1,8 @@
 """HCMN – Human Centralized Mesh Network  ·  FastAPI application entry-point.
 
 Brings together three modules:
-  1. Public Observational Deck  – camera feed aggregation
-  2. SDR RF Spectrum Visualisation – local software-defined radio mapping
+  1. Video Observational Deck – camera feed aggregation with quad-view & AI chat
+  2. Satellite/GPS Tracking – global tracking with aircraft, vessels, satellites, crime data
   3. Wi-Fi CSI Sensing – presence detection & spatial reconstruction
 """
 
@@ -15,10 +15,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.config import Settings
-from backend.app.routers import cameras, csi, sdr
+from backend.app.routers import cameras, chat, csi, sdr, tracking
 from backend.app.services.camera_service import CameraService
+from backend.app.services.chat_service import ChatService
 from backend.app.services.csi_service import CSIService
 from backend.app.services.sdr_service import SDRService
+from backend.app.services.tracking_service import TrackingService
 
 settings = Settings()
 
@@ -29,10 +31,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     camera_service = CameraService(settings)
     sdr_service = SDRService(settings)
     csi_service = CSIService(settings)
+    tracking_service = TrackingService(settings)
+    chat_service = ChatService(settings)
 
     cameras.init(camera_service)
     sdr.init(sdr_service)
     csi.init(csi_service)
+    tracking.init(tracking_service, camera_service)
+    chat.init(chat_service)
 
     yield  # application runs
 
@@ -40,11 +46,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title=settings.app_name,
     description=(
-        "Centralized surveillance observational deck featuring public camera "
-        "aggregation, local SDR RF spectrum mapping, and Wi-Fi CSI-based "
-        "presence detection & spatial reconstruction."
+        "Multi-module surveillance and monitoring platform:\n"
+        "• Module 1: Video Observational Deck with quad-view & AI chat\n"
+        "• Module 2: Satellite/GPS/AIS/FAA tracking with crime heat maps\n"
+        "• Module 3: Wi-Fi CSI presence detection & environment mapping"
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -59,6 +66,8 @@ app.add_middleware(
 app.include_router(cameras.router)
 app.include_router(sdr.router)
 app.include_router(csi.router)
+app.include_router(tracking.router)
+app.include_router(chat.router)
 
 
 @app.get("/api/health")

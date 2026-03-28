@@ -18,6 +18,16 @@ class CameraSource(str, Enum):
     WEATHER = "weather"
     EARTHCAM = "earthcam"
     CUSTOM = "custom"
+    IP_CAMERA = "ip_camera"
+    CCTV = "cctv"
+
+
+class GeoLocation(BaseModel):
+    """Geographic coordinates."""
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    label: str = ""
 
 
 class CameraFeed(BaseModel):
@@ -31,14 +41,6 @@ class CameraFeed(BaseModel):
     thumbnail_url: str | None = None
     is_live: bool = True
     description: str = ""
-
-
-class GeoLocation(BaseModel):
-    """Geographic coordinates."""
-
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
-    label: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -107,15 +109,6 @@ class PresenceEvent(BaseModel):
     confidence: float = 0.0
 
 
-class RoomLayout(BaseModel):
-    """AI-reconstructed room layout from CSI data."""
-
-    walls: list[WallSegment] = []
-    zones: list[RoomZone] = []
-    width_m: float = 0.0
-    height_m: float = 0.0
-
-
 class WallSegment(BaseModel):
     """A detected wall segment in 2-D space."""
 
@@ -136,6 +129,150 @@ class RoomZone(BaseModel):
     radius_m: float = 1.0
 
 
-# Rebuild models to resolve forward references
-CameraFeed.model_rebuild()
-RoomLayout.model_rebuild()
+class RoomLayout(BaseModel):
+    """AI-reconstructed room layout from CSI data."""
+
+    walls: list[WallSegment] = []
+    zones: list[RoomZone] = []
+    width_m: float = 0.0
+    height_m: float = 0.0
+
+
+class DetectedEntity(BaseModel):
+    """An entity detected via CSI signal analysis."""
+
+    id: str
+    entity_type: str = "unknown"  # person, furniture, wall, pet
+    density_score: float = 0.0
+    x: float = 0.0
+    y: float = 0.0
+    confidence: float = 0.0
+    signal_variance: float = 0.0
+
+
+class CSIEnvironmentMap(BaseModel):
+    """Full environment map built from CSI analysis."""
+
+    layout: RoomLayout = RoomLayout()
+    entities: list[DetectedEntity] = []
+    router_position: GeoLocation | None = None
+    signal_strength_map: list[list[float]] = []
+    timestamp: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Module 2 – Tracking / Satellite / GPS models
+# ---------------------------------------------------------------------------
+
+class TrackingSource(str, Enum):
+    """Data source for tracking information."""
+
+    OPENSKY = "opensky"
+    AIS = "ais"
+    SATELLITE = "satellite"
+    NASA = "nasa"
+    FAA = "faa"
+    CRIME = "crime"
+    CAMERA = "camera"
+
+
+class PinnedLocation(BaseModel):
+    """User-pinned area of interest on the map."""
+
+    id: str
+    location: GeoLocation
+    radius_km: float = Field(default=10.0, ge=0.1, le=500.0)
+    label: str = ""
+
+
+class AircraftTrack(BaseModel):
+    """Live aircraft position from OpenSky / FAA."""
+
+    icao24: str
+    callsign: str = ""
+    origin_country: str = ""
+    latitude: float
+    longitude: float
+    altitude_m: float = 0.0
+    velocity_ms: float = 0.0
+    heading: float = 0.0
+    on_ground: bool = False
+    last_contact: float = 0.0
+
+
+class VesselTrack(BaseModel):
+    """AIS vessel tracking data."""
+
+    mmsi: str
+    name: str = ""
+    vessel_type: str = ""
+    latitude: float
+    longitude: float
+    speed_knots: float = 0.0
+    heading: float = 0.0
+    destination: str = ""
+    last_update: float = 0.0
+
+
+class SatellitePass(BaseModel):
+    """Satellite pass / position data."""
+
+    norad_id: int
+    name: str = ""
+    latitude: float = 0.0
+    longitude: float = 0.0
+    altitude_km: float = 0.0
+    azimuth: float = 0.0
+    elevation: float = 0.0
+    timestamp: float = 0.0
+    is_visible: bool = False
+
+
+class CrimeReport(BaseModel):
+    """Police crime report data point."""
+
+    id: str = ""
+    latitude: float
+    longitude: float
+    incident_type: str = ""
+    description: str = ""
+    timestamp: float = 0.0
+    source: str = ""
+    severity: str = "unknown"
+
+
+class TrackingAreaData(BaseModel):
+    """Aggregate data for a pinned location area."""
+
+    pinned_location: PinnedLocation
+    aircraft: list[AircraftTrack] = []
+    vessels: list[VesselTrack] = []
+    satellites: list[SatellitePass] = []
+    crime_reports: list[CrimeReport] = []
+    nearby_cameras: list[CameraFeed] = []
+    summary: str = ""
+
+
+# ---------------------------------------------------------------------------
+# AI Chat models
+# ---------------------------------------------------------------------------
+
+class ChatMessage(BaseModel):
+    """A single chat message."""
+
+    role: str = "user"
+    content: str
+
+
+class ChatRequest(BaseModel):
+    """Request to the AI chat endpoint."""
+
+    messages: list[ChatMessage]
+    context: dict = {}  # feed IDs, location data, etc.
+
+
+class ChatResponse(BaseModel):
+    """Response from the AI chat endpoint."""
+
+    reply: str
+    sources: list[str] = []

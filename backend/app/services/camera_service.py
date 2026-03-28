@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import httpx
@@ -11,6 +12,15 @@ from backend.app.config import Settings
 from backend.app.models.schemas import CameraFeed, CameraSource, GeoLocation
 
 logger = logging.getLogger(__name__)
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return r * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
 
 # ---------------------------------------------------------------------------
 # Built-in demo / fallback feeds (publicly available streams)
@@ -26,6 +36,22 @@ _DEMO_FEEDS: list[dict[str, Any]] = [
         "description": "New York City DOT traffic camera at Times Square.",
     },
     {
+        "id": "dot-nyc-brooklyn-bridge",
+        "name": "NYC Brooklyn Bridge - DOT Traffic Cam",
+        "source": CameraSource.DOT_TRAFFIC,
+        "stream_url": "https://webcams.nyctmc.org/api/cameras/102",
+        "location": {"latitude": 40.7061, "longitude": -73.9969, "label": "Brooklyn Bridge, NYC"},
+        "description": "DOT camera at Brooklyn Bridge approach.",
+    },
+    {
+        "id": "dot-nyc-fdr-drive",
+        "name": "NYC FDR Drive - DOT Traffic Cam",
+        "source": CameraSource.DOT_TRAFFIC,
+        "stream_url": "https://webcams.nyctmc.org/api/cameras/55",
+        "location": {"latitude": 40.7282, "longitude": -73.9742, "label": "FDR Drive, NYC"},
+        "description": "DOT camera on FDR Drive, East Side Manhattan.",
+    },
+    {
         "id": "dot-chicago-lsd",
         "name": "Chicago Lake Shore Drive - DOT",
         "source": CameraSource.DOT_TRAFFIC,
@@ -34,12 +60,28 @@ _DEMO_FEEDS: list[dict[str, Any]] = [
         "description": "Chicago DOT camera on Lake Shore Drive.",
     },
     {
+        "id": "dot-la-101",
+        "name": "LA Highway 101 - CalTrans",
+        "source": CameraSource.DOT_TRAFFIC,
+        "stream_url": "https://cwwp2.dot.ca.gov/tools/cctvview.htm",
+        "location": {"latitude": 34.0522, "longitude": -118.2437, "label": "US-101, Los Angeles"},
+        "description": "CalTrans camera on US-101 in Los Angeles.",
+    },
+    {
         "id": "weather-miami-beach",
         "name": "Miami Beach Weather Cam",
         "source": CameraSource.WEATHER,
         "stream_url": "https://www.earthcam.com/usa/florida/miamibeach/",
         "location": {"latitude": 25.7907, "longitude": -80.13, "label": "Miami Beach, FL"},
         "description": "Live weather cam overlooking Miami Beach.",
+    },
+    {
+        "id": "weather-sf-golden-gate",
+        "name": "San Francisco Golden Gate",
+        "source": CameraSource.WEATHER,
+        "stream_url": "https://www.earthcam.com/usa/california/sanfrancisco/goldengate/",
+        "location": {"latitude": 37.8199, "longitude": -122.4783, "label": "Golden Gate Bridge, SF"},
+        "description": "Live view of the Golden Gate Bridge.",
     },
     {
         "id": "earthcam-abbey-road",
@@ -56,6 +98,22 @@ _DEMO_FEEDS: list[dict[str, Any]] = [
         "stream_url": "https://www.earthcam.com/world/ireland/dublin/",
         "location": {"latitude": 53.3498, "longitude": -6.2603, "label": "Dublin, Ireland"},
         "description": "Live view of Dublin city centre.",
+    },
+    {
+        "id": "earthcam-nyc-5th-ave",
+        "name": "NYC 5th Avenue – EarthCam",
+        "source": CameraSource.EARTHCAM,
+        "stream_url": "https://www.earthcam.com/usa/newyork/fifthavenue/",
+        "location": {"latitude": 40.7484, "longitude": -73.9857, "label": "5th Avenue, NYC"},
+        "description": "Live view of 5th Avenue, New York City.",
+    },
+    {
+        "id": "earthcam-tokyo-shibuya",
+        "name": "Tokyo Shibuya Crossing – EarthCam",
+        "source": CameraSource.EARTHCAM,
+        "stream_url": "https://www.earthcam.com/world/japan/tokyo/shibuya/",
+        "location": {"latitude": 35.6595, "longitude": 139.7004, "label": "Shibuya Crossing, Tokyo"},
+        "description": "Live view of Shibuya Crossing, Tokyo.",
     },
 ]
 
@@ -76,27 +134,38 @@ class CameraService:
         self,
         source: CameraSource | None = None,
     ) -> list[CameraFeed]:
-        """Return all known feeds, optionally filtered by *source*."""
         feeds = list(self._feeds.values())
         if source is not None:
             feeds = [f for f in feeds if f.source == source]
         return feeds
 
     def get_feed(self, feed_id: str) -> CameraFeed | None:
-        """Look up a single feed by its id."""
         return self._feeds.get(feed_id)
 
     def add_feed(self, feed: CameraFeed) -> CameraFeed:
-        """Register a new camera feed."""
         self._feeds[feed.id] = feed
         return feed
 
     def remove_feed(self, feed_id: str) -> bool:
-        """Remove a feed by id. Returns True if it existed."""
         return self._feeds.pop(feed_id, None) is not None
 
+    def search_by_location(
+        self,
+        latitude: float,
+        longitude: float,
+        radius_km: float = 50.0,
+    ) -> list[CameraFeed]:
+        """Find camera feeds within radius_km of the given coordinates."""
+        results: list[CameraFeed] = []
+        for feed in self._feeds.values():
+            if feed.location is None:
+                continue
+            dist = _haversine_km(latitude, longitude, feed.location.latitude, feed.location.longitude)
+            if dist <= radius_km:
+                results.append(feed)
+        return results
+
     async def refresh_dot_feeds(self) -> list[CameraFeed]:
-        """Fetch latest traffic camera list from DOT API."""
         if not self._settings.dot_api_key:
             logger.info("DOT API key not configured – skipping refresh")
             return []
@@ -136,7 +205,8 @@ class CameraService:
 
     def _load_demo_feeds(self) -> None:
         for raw in _DEMO_FEEDS:
-            loc_data = raw.pop("location", None)
+            raw_copy = dict(raw)
+            loc_data = raw_copy.pop("location", None)
             loc = GeoLocation(**loc_data) if loc_data else None
-            feed = CameraFeed(**raw, location=loc)
+            feed = CameraFeed(**raw_copy, location=loc)
             self._feeds[feed.id] = feed

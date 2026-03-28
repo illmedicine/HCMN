@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from backend.app.models.schemas import CameraFeed, CameraSource
 from backend.app.services.camera_service import CameraService
 
 router = APIRouter(prefix="/api/cameras", tags=["cameras"])
 
-# Service instance is injected at startup (see main.py)
 _service: CameraService | None = None
 
 
@@ -28,6 +27,16 @@ def _svc() -> CameraService:
 async def list_feeds(source: CameraSource | None = None) -> list[CameraFeed]:
     """Return all registered camera feeds, optionally filtered by source."""
     return _svc().list_feeds(source)
+
+
+@router.get("/search", response_model=list[CameraFeed])
+async def search_by_location(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(50.0, ge=0.1, le=500),
+) -> list[CameraFeed]:
+    """Find camera feeds within radius of given coordinates."""
+    return _svc().search_by_location(lat, lon, radius_km)
 
 
 @router.get("/{feed_id}", response_model=CameraFeed)
