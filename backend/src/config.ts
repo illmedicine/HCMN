@@ -31,6 +31,6 @@ export const config = {
   cesiumIonToken: process.env.CESIUM_ION_TOKEN || '',
 
   cors: {
-    origins: ['http://localhost:3000', 'http://localhost:5173'],
+    origins: ['http://localhost:3000', 'http://localhost:5173'] as string[],
   },
-} as const;
+};
