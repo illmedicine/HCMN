@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { fetchLiveAircraft, fetchTLEs } from '../services/api';
+import { fetchLiveAircraft, fetchTLEs, getCellTowers, searchCellByPhone, lookupCellTower, crossReferenceCells } from '../services/api';
 
 /* ---------- CesiumJS + resium ---------- */
 import * as Cesium from 'cesium';
@@ -88,6 +88,10 @@ export default function TrackingPanel() {
 
   const [aircraft, setAircraft] = useState([]);
   const [satellites, setSatellites] = useState([]);
+  const [cellTowers, setCellTowers] = useState([]);
+  const [cellHistory, setCellHistory] = useState(null);
+  const [phoneSearch, setPhoneSearch] = useState('');
+  const [cellLookup, setCellLookup] = useState({ mcc: '', mnc: '', lac: '', cell_id: '' });
   const [activeLayer, setActiveLayer] = useState('all');
   const [tleGroup, setTleGroup] = useState('stations');
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -130,11 +134,59 @@ export default function TrackingPanel() {
     setSatellites(propagated);
   }, [tleGroup]);
 
+  /* ---------- Fetch cell towers near search location ---------- */
+  const loadCellTowers = useCallback(async () => {
+    const cLat = parseFloat(lat);
+    const cLon = parseFloat(lon);
+    const r = parseFloat(radius);
+    if (isNaN(cLat) || isNaN(cLon)) return;
+    const result = await getCellTowers(cLat, cLon, r);
+    if (result) setCellTowers(result);
+  }, [lat, lon, radius]);
+
+  /* ---------- Search cell IDs by phone number ---------- */
+  async function handlePhoneSearch(e) {
+    e.preventDefault();
+    if (!phoneSearch.trim()) return;
+    setLoading(true);
+    const history = await searchCellByPhone(phoneSearch.trim());
+    setCellHistory(history);
+    // Also update the cell towers list with towers from the history
+    if (history?.towers_visited?.length) {
+      setCellTowers((prev) => {
+        const existing = new Set(prev.map((t) => `${t.mcc}-${t.mnc}-${t.lac}-${t.cell_id}`));
+        const newTowers = history.towers_visited.filter(
+          (t) => !existing.has(`${t.mcc}-${t.mnc}-${t.lac}-${t.cell_id}`),
+        );
+        return [...prev, ...newTowers];
+      });
+    }
+    setLoading(false);
+  }
+
+  /* ---------- Lookup individual cell tower ---------- */
+  async function handleCellLookup(e) {
+    e.preventDefault();
+    const { mcc, mnc, lac, cell_id } = cellLookup;
+    if (!mcc || !mnc || !lac || !cell_id) return;
+    setLoading(true);
+    const tower = await lookupCellTower(mcc, mnc, lac, cell_id);
+    if (tower && tower.latitude) {
+      setCellTowers((prev) => {
+        const key = `${tower.mcc}-${tower.mnc}-${tower.lac}-${tower.cell_id}`;
+        const exists = prev.some((t) => `${t.mcc}-${t.mnc}-${t.lac}-${t.cell_id}` === key);
+        return exists ? prev : [...prev, tower];
+      });
+      flyTo(tower.latitude, tower.longitude, 50000);
+    }
+    setLoading(false);
+  }
+
   /* ---------- Scan button handler ---------- */
   async function handleSearch(e) {
     e.preventDefault();
     setLoading(true);
-    await Promise.all([loadAircraft(), loadSatellites()]);
+    await Promise.all([loadAircraft(), loadSatellites(), loadCellTowers()]);
     flyTo(parseFloat(lat), parseFloat(lon));
     setLoading(false);
   }
@@ -192,6 +244,7 @@ export default function TrackingPanel() {
     { id: 'all', label: '🌐 All', color: '#3b82f6' },
     { id: 'aircraft', label: '✈️ Aircraft', color: '#f59e0b' },
     { id: 'satellites', label: '🛰️ Satellites', color: '#a78bfa' },
+    { id: 'celltowers', label: '📡 Cell Towers', color: '#10b981' },
   ];
 
   const tleGroups = [
@@ -204,6 +257,7 @@ export default function TrackingPanel() {
 
   const showAircraft = activeLayer === 'all' || activeLayer === 'aircraft';
   const showSatellites = activeLayer === 'all' || activeLayer === 'satellites';
+  const showCellTowers = activeLayer === 'all' || activeLayer === 'celltowers';
 
   return (
     <div className="module-panel tracking-module">
@@ -212,7 +266,7 @@ export default function TrackingPanel() {
           <span className="module-icon">🌍</span>
           <h2>Module 2 – Satellite &amp; Flight Tracking</h2>
           <span className="feed-count">
-            {aircraft.length} flights · {satellites.length} sats
+            {aircraft.length} flights · {satellites.length} sats · {cellTowers.length} towers
           </span>
         </div>
         <div className="module-actions">
@@ -313,7 +367,58 @@ export default function TrackingPanel() {
             </div>
           </div>
 
-          {(aircraft.length > 0 || satellites.length > 0) && (
+          <div className="tracking-card">
+            <h3>📱 Phone → Cell ID Search</h3>
+            <form onSubmit={handlePhoneSearch}>
+              <div className="input-group">
+                <label>Phone Number</label>
+                <input
+                  type="text"
+                  value={phoneSearch}
+                  onChange={(e) => setPhoneSearch(e.target.value)}
+                  placeholder="+1234567890"
+                />
+              </div>
+              <button type="submit" className="btn-search" disabled={loading}>
+                {loading ? 'Searching…' : '🔍 Search Cell IDs'}
+              </button>
+            </form>
+            {cellHistory && (
+              <div className="cell-history-summary" style={{ marginTop: 8, fontSize: '0.85em', color: '#94a3b8' }}>
+                <p>{cellHistory.summary}</p>
+                <p style={{ color: '#10b981' }}>
+                  {cellHistory.towers_visited?.length || 0} towers · {cellHistory.pings?.length || 0} pings
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="tracking-card">
+            <h3>🔎 Cell Tower Lookup</h3>
+            <form onSubmit={handleCellLookup}>
+              <div className="input-group">
+                <label>MCC</label>
+                <input type="number" value={cellLookup.mcc} onChange={(e) => setCellLookup((p) => ({ ...p, mcc: e.target.value }))} placeholder="310" />
+              </div>
+              <div className="input-group">
+                <label>MNC</label>
+                <input type="number" value={cellLookup.mnc} onChange={(e) => setCellLookup((p) => ({ ...p, mnc: e.target.value }))} placeholder="410" />
+              </div>
+              <div className="input-group">
+                <label>LAC</label>
+                <input type="number" value={cellLookup.lac} onChange={(e) => setCellLookup((p) => ({ ...p, lac: e.target.value }))} placeholder="30000" />
+              </div>
+              <div className="input-group">
+                <label>Cell ID</label>
+                <input type="number" value={cellLookup.cell_id} onChange={(e) => setCellLookup((p) => ({ ...p, cell_id: e.target.value }))} placeholder="12345" />
+              </div>
+              <button type="submit" className="btn-search" disabled={loading}>
+                {loading ? 'Looking up…' : '📡 Locate Tower'}
+              </button>
+            </form>
+          </div>
+
+          {(aircraft.length > 0 || satellites.length > 0 || cellTowers.length > 0) && (
             <div className="tracking-card summary-card">
               <h3>📊 Area Summary</h3>
               <div className="summary-stats">
@@ -324,6 +429,10 @@ export default function TrackingPanel() {
                 <div className="stat">
                   <span className="stat-num">{satellites.length}</span>
                   <span className="stat-label">Satellites</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-num">{cellTowers.length}</span>
+                  <span className="stat-label">Cell Towers</span>
                 </div>
               </div>
             </div>
@@ -441,6 +550,60 @@ export default function TrackingPanel() {
                   </Entity>
                 ))}
 
+              {/* Cell Towers */}
+              {showCellTowers &&
+                cellTowers.map((ct, idx) => (
+                  <Entity
+                    key={`ct-${ct.mcc}-${ct.mnc}-${ct.lac}-${ct.cell_id}-${idx}`}
+                    name={`${ct.radio || 'Cell'} Tower ${ct.cell_id}`}
+                    description={`<table style="width:100%">
+                      <tr><td>Cell ID</td><td><b>${ct.cell_id}</b></td></tr>
+                      <tr><td>MCC / MNC</td><td>${ct.mcc} / ${ct.mnc}</td></tr>
+                      <tr><td>LAC</td><td>${ct.lac}</td></tr>
+                      <tr><td>Radio</td><td>${ct.radio || '—'}</td></tr>
+                      <tr><td>Operator</td><td>${ct.operator || '—'}</td></tr>
+                      <tr><td>Range</td><td>${ct.range_m ? Math.round(ct.range_m) + ' m' : '—'}</td></tr>
+                      <tr><td>Signal</td><td>${ct.signal_strength ? ct.signal_strength + ' dBm' : '—'}</td></tr>
+                      <tr><td>Samples</td><td>${ct.samples || '—'}</td></tr>
+                      <tr><td>Source</td><td>${ct.source || '—'}</td></tr>
+                    </table>`}
+                    position={Cesium.Cartesian3.fromDegrees(ct.longitude || 0, ct.latitude || 0, 50)}
+                  >
+                    <PointGraphics
+                      pixelSize={9}
+                      color={Cesium.Color.fromCssColorString('#10b981')}
+                      outlineColor={Cesium.Color.WHITE}
+                      outlineWidth={1.5}
+                    />
+                    <LabelGraphics
+                      text={`${ct.radio || '📡'} ${ct.cell_id}`}
+                      font="10px monospace"
+                      fillColor={Cesium.Color.fromCssColorString('#10b981')}
+                      style={Cesium.LabelStyle.FILL_AND_OUTLINE}
+                      outlineColor={Cesium.Color.BLACK}
+                      outlineWidth={2}
+                      pixelOffset={new Cesium.Cartesian2(12, -4)}
+                      scale={0.85}
+                      distanceDisplayCondition={new Cesium.DistanceDisplayCondition(0, 500000)}
+                    />
+                  </Entity>
+                ))}
+
+              {/* Cell tower ping trail (from phone search) */}
+              {showCellTowers && cellHistory?.pings?.length > 1 && (
+                <Entity name="Device movement trail">
+                  <PolylineGraphics
+                    positions={cellHistory.pings
+                      .filter((p) => p.cell_tower?.latitude && p.cell_tower?.longitude)
+                      .map((p) =>
+                        Cesium.Cartesian3.fromDegrees(p.cell_tower.longitude, p.cell_tower.latitude, 100),
+                      )}
+                    width={3}
+                    material={Cesium.Color.fromCssColorString('#f43f5e').withAlpha(0.7)}
+                  />
+                </Entity>
+              )}
+
               {/* Pinned search location */}
               <Entity
                 name={label}
@@ -525,6 +688,78 @@ export default function TrackingPanel() {
                           <td className="mono">{s.altitude_km?.toFixed(0) || '—'}</td>
                           <td className="mono">{s.latitude?.toFixed(2)}°</td>
                           <td className="mono">{s.longitude?.toFixed(2)}°</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {showCellTowers && cellTowers.length > 0 && (
+              <div className="data-table-card">
+                <h4>📡 Cell Towers ({cellTowers.length})</h4>
+                <div className="data-table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Cell ID</th>
+                        <th>MCC/MNC</th>
+                        <th>LAC</th>
+                        <th>Radio</th>
+                        <th>Operator</th>
+                        <th>Signal</th>
+                        <th>Range</th>
+                        <th>Source</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cellTowers.map((ct, i) => (
+                        <tr key={i}>
+                          <td className="mono">{ct.cell_id}</td>
+                          <td className="mono">{ct.mcc}/{ct.mnc}</td>
+                          <td className="mono">{ct.lac}</td>
+                          <td>
+                            <span className={`status-badge ${ct.radio === '5G-NR' ? 'airborne' : 'ground'}`}>
+                              {ct.radio || '—'}
+                            </span>
+                          </td>
+                          <td>{ct.operator || '—'}</td>
+                          <td className="mono">{ct.signal_strength ? `${ct.signal_strength} dBm` : '—'}</td>
+                          <td className="mono">{ct.range_m ? `${Math.round(ct.range_m)}m` : '—'}</td>
+                          <td>{ct.source || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {showCellTowers && cellHistory?.pings?.length > 0 && (
+              <div className="data-table-card">
+                <h4>📱 Device Ping History ({cellHistory.pings.length} pings)</h4>
+                <div className="data-table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>Cell ID</th>
+                        <th>Radio</th>
+                        <th>Signal</th>
+                        <th>Lat</th>
+                        <th>Lon</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cellHistory.pings.map((p, i) => (
+                        <tr key={i}>
+                          <td className="mono">{new Date(p.timestamp * 1000).toLocaleTimeString()}</td>
+                          <td className="mono">{p.cell_tower?.cell_id || '—'}</td>
+                          <td>{p.cell_tower?.radio || '—'}</td>
+                          <td className="mono">{p.signal_dbm ? `${p.signal_dbm} dBm` : '—'}</td>
+                          <td className="mono">{p.cell_tower?.latitude?.toFixed(4) || '—'}°</td>
+                          <td className="mono">{p.cell_tower?.longitude?.toFixed(4) || '—'}°</td>
                         </tr>
                       ))}
                     </tbody>
