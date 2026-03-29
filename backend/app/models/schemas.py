@@ -174,6 +174,7 @@ class TrackingSource(str, Enum):
     FAA = "faa"
     CRIME = "crime"
     CAMERA = "camera"
+    CELL_TOWER = "cell_tower"
 
 
 class PinnedLocation(BaseModel):
@@ -241,6 +242,46 @@ class CrimeReport(BaseModel):
     severity: str = "unknown"
 
 
+class CellTower(BaseModel):
+    """A single cell tower / base station with its geographic location."""
+
+    mcc: int = Field(description="Mobile Country Code")
+    mnc: int = Field(description="Mobile Network Code")
+    lac: int = Field(description="Location Area Code")
+    cell_id: int = Field(description="Cell ID")
+    latitude: float = 0.0
+    longitude: float = 0.0
+    range_m: float = Field(default=0.0, description="Estimated coverage range in metres")
+    radio: str = Field(default="", description="Radio type: GSM, LTE, UMTS, CDMA, 5G-NR")
+    operator: str = ""
+    source: str = Field(default="", description="Data source: opencellid, beacondb, wigle")
+    signal_strength: float = Field(default=0.0, description="Signal strength in dBm")
+    samples: int = Field(default=0, description="Number of measurements / samples")
+    last_seen: float = Field(default=0.0, description="Unix timestamp of last observation")
+
+
+class CellTowerPing(BaseModel):
+    """A device ping event observed at a particular cell tower."""
+
+    cell_tower: CellTower
+    timestamp: float = Field(description="Unix epoch when the device was observed")
+    signal_dbm: float = Field(default=0.0, description="Signal strength at time of ping")
+    device_id: str = Field(default="", description="Anonymised device / IMSI identifier")
+    phone_number: str = Field(default="", description="Associated phone number if known")
+
+
+class DeviceCellHistory(BaseModel):
+    """Cross-referenced cell tower ping history for a tracked device."""
+
+    device_id: str
+    phone_number: str = ""
+    pings: list[CellTowerPing] = []
+    towers_visited: list[CellTower] = []
+    first_seen: float = 0.0
+    last_seen: float = 0.0
+    summary: str = ""
+
+
 class TrackingAreaData(BaseModel):
     """Aggregate data for a pinned location area."""
 
@@ -249,6 +290,7 @@ class TrackingAreaData(BaseModel):
     vessels: list[VesselTrack] = []
     satellites: list[SatellitePass] = []
     crime_reports: list[CrimeReport] = []
+    cell_towers: list[CellTower] = []
     nearby_cameras: list[CameraFeed] = []
     summary: str = ""
 
