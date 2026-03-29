@@ -122,19 +122,14 @@ export default function GlobePanel() {
         maps3dLibRef.current = maps3dLib;
 
         if (viewMode === '3d' && maps3dLib?.Map3DElement) {
-          // Create a fresh container div for 3D
-          const container = document.createElement('div');
-          container.style.width = '100%';
-          container.style.height = '100%';
-          mapRef.current.appendChild(container);
-
+          // Append Map3DElement directly (CSS handles sizing via absolute positioning)
           const el = new maps3dLib.Map3DElement({
             center: { lat: 20, lng: 0, altitude: 15000000 },
             range: 25000000,
             tilt: 0,
             heading: 0,
           });
-          container.appendChild(el);
+          mapRef.current.appendChild(el);
           map3dRef.current = el;
           is3dRef.current = true;
           setMapReady(true);
@@ -206,7 +201,7 @@ export default function GlobePanel() {
             content: pin,
           });
           markersRef.current.push(m);
-          if (onClick) m.addEventListener('click', onClick);
+          if (onClick) m.addEventListener('gmp-click', onClick);
         } catch (e) {
           console.warn('Marker creation failed:', e);
         }
