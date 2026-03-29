@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     n2yo_api_key: str = ""  # Satellite tracking (Starlink, ISS)
     n2yo_base_url: str = "https://api.n2yo.com/rest/v1/satellite"
 
+    # Cell tower geolocation APIs
+    opencellid_api_key: str = ""  # OpenCelliD / Unwired Labs
+    opencellid_base_url: str = "https://us1.unwiredlabs.com/v2"
+    beacondb_base_url: str = "https://beacondb.net/v1"
+    wigle_api_key: str = ""  # WiGLE (encoded as user:pass or API token)
+    wigle_base_url: str = "https://api.wigle.net/api/v2"
+
     # AI Chat (OpenAI-compatible)
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"

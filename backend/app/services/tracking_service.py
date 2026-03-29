@@ -11,6 +11,7 @@ Aggregates data from multiple sources for a pinned geographic location:
 
 from __future__ import annotations
 
+import base64
 import logging
 import math
 import time
@@ -22,7 +23,10 @@ from backend.app.config import Settings
 from backend.app.models.schemas import (
     AircraftTrack,
     CameraFeed,
+    CellTower,
+    CellTowerPing,
     CrimeReport,
+    DeviceCellHistory,
     GeoLocation,
     PinnedLocation,
     SatellitePass,
@@ -82,6 +86,7 @@ class TrackingService:
         vessels = await self.fetch_vessels(pin.location, pin.radius_km)
         satellites = await self.fetch_satellites(pin.location)
         crimes = await self.fetch_crime_data(pin.location, pin.radius_km)
+        cell_towers = await self.fetch_cell_towers(pin.location, pin.radius_km)
         nearby_cams = self._find_nearby_cameras(pin.location, pin.radius_km, camera_feeds or [])
 
         summary_parts = []
@@ -93,6 +98,8 @@ class TrackingService:
             summary_parts.append(f"{len(satellites)} satellite passes recorded")
         if crimes:
             summary_parts.append(f"{len(crimes)} recent crime reports")
+        if cell_towers:
+            summary_parts.append(f"{len(cell_towers)} cell towers identified")
         if nearby_cams:
             summary_parts.append(f"{len(nearby_cams)} live camera feeds available")
 
@@ -104,6 +111,7 @@ class TrackingService:
             vessels=vessels,
             satellites=satellites,
             crime_reports=crimes,
+            cell_towers=cell_towers,
             nearby_cameras=nearby_cams,
             summary=summary,
         )
@@ -290,6 +298,418 @@ class TrackingService:
             return self._demo_crime_data(location)
 
     # ------------------------------------------------------------------
+    # Cell Towers (OpenCelliD / beaconDB / WiGLE)
+    # ------------------------------------------------------------------
+
+    async def fetch_cell_towers(self, location: GeoLocation, radius_km: float) -> list[CellTower]:
+        """Fetch cell towers near a location from all configured sources."""
+        towers: list[CellTower] = []
+
+        # Query all sources concurrently and merge results
+        opencellid_towers = await self._fetch_opencellid_towers(location, radius_km)
+        beacondb_towers = await self._fetch_beacondb_towers(location, radius_km)
+        wigle_towers = await self._fetch_wigle_towers(location, radius_km)
+
+        towers.extend(opencellid_towers)
+        towers.extend(beacondb_towers)
+        towers.extend(wigle_towers)
+
+        if not towers:
+            return self._demo_cell_towers(location)
+
+        # De-duplicate by (MCC, MNC, LAC, CID) – keep best source
+        seen: dict[tuple[int, int, int, int], CellTower] = {}
+        for t in towers:
+            key = (t.mcc, t.mnc, t.lac, t.cell_id)
+            existing = seen.get(key)
+            if existing is None or t.samples > existing.samples:
+                seen[key] = t
+        return list(seen.values())
+
+    async def lookup_cell_tower(
+        self,
+        mcc: int,
+        mnc: int,
+        lac: int,
+        cell_id: int,
+    ) -> CellTower | None:
+        """Look up a specific cell tower by its identifiers across all sources."""
+        # Try OpenCelliD first (largest database)
+        tower = await self._lookup_opencellid(mcc, mnc, lac, cell_id)
+        if tower:
+            return tower
+
+        # Fall back to beaconDB geolocation API
+        tower = await self._lookup_beacondb(mcc, mnc, lac, cell_id)
+        if tower:
+            return tower
+
+        # Fall back to WiGLE search
+        tower = await self._lookup_wigle(mcc, mnc, lac, cell_id)
+        if tower:
+            return tower
+
+        return None
+
+    async def search_cell_ids_by_phone(self, phone_number: str) -> DeviceCellHistory:
+        """Search for cell tower pings associated with a phone number.
+
+        This performs a cross-reference lookup: for the given phone number we
+        simulate the retrieval of cell IDs the device has connected to and then
+        resolve each tower's location via the cell tower databases.  In a real
+        deployment this data would come from a lawful-intercept / CDR (Call
+        Detail Record) feed; here we demonstrate the cross-referencing logic
+        with the open-source geolocation databases.
+        """
+        # In production, CDR data would be ingested from telecom provider.
+        # We simulate a set of cell IDs that the phone was observed on.
+        demo_pings = self._demo_cdr_pings(phone_number)
+
+        resolved_towers: list[CellTower] = []
+        resolved_pings: list[CellTowerPing] = []
+
+        for ping in demo_pings:
+            tower = await self.lookup_cell_tower(
+                ping.cell_tower.mcc,
+                ping.cell_tower.mnc,
+                ping.cell_tower.lac,
+                ping.cell_tower.cell_id,
+            )
+            if tower:
+                resolved_towers.append(tower)
+                resolved_pings.append(CellTowerPing(
+                    cell_tower=tower,
+                    timestamp=ping.timestamp,
+                    signal_dbm=ping.signal_dbm,
+                    device_id=ping.device_id,
+                    phone_number=phone_number,
+                ))
+            else:
+                # Keep the unresolved tower data
+                resolved_towers.append(ping.cell_tower)
+                resolved_pings.append(ping)
+
+        first_ts = min((p.timestamp for p in resolved_pings), default=0)
+        last_ts = max((p.timestamp for p in resolved_pings), default=0)
+
+        return DeviceCellHistory(
+            device_id=f"dev-{phone_number[-4:]}",
+            phone_number=phone_number,
+            pings=resolved_pings,
+            towers_visited=resolved_towers,
+            first_seen=first_ts,
+            last_seen=last_ts,
+            summary=(
+                f"Device associated with {phone_number} observed on "
+                f"{len(resolved_towers)} cell towers between "
+                f"{len(resolved_pings)} ping events."
+            ),
+        )
+
+    async def cross_reference_device(
+        self,
+        cell_ids: list[dict[str, int]],
+    ) -> DeviceCellHistory:
+        """Cross-reference a list of cell IDs to locate tower positions.
+
+        Each entry in *cell_ids* is a dict with keys mcc, mnc, lac, cell_id
+        and optionally timestamp and signal_dbm.
+        """
+        resolved_towers: list[CellTower] = []
+        pings: list[CellTowerPing] = []
+
+        for entry in cell_ids:
+            mcc = entry.get("mcc", 0)
+            mnc = entry.get("mnc", 0)
+            lac = entry.get("lac", 0)
+            cid = entry.get("cell_id", 0)
+            ts = entry.get("timestamp", time.time())
+            sig = entry.get("signal_dbm", 0.0)
+
+            tower = await self.lookup_cell_tower(mcc, mnc, lac, cid)
+            if tower is None:
+                tower = CellTower(
+                    mcc=mcc, mnc=mnc, lac=lac, cell_id=cid,
+                    source="unknown",
+                )
+            resolved_towers.append(tower)
+            pings.append(CellTowerPing(
+                cell_tower=tower,
+                timestamp=ts,
+                signal_dbm=sig,
+            ))
+
+        first_ts = min((p.timestamp for p in pings), default=0)
+        last_ts = max((p.timestamp for p in pings), default=0)
+
+        # De-duplicate towers
+        unique: dict[tuple[int, int, int, int], CellTower] = {}
+        for t in resolved_towers:
+            unique[(t.mcc, t.mnc, t.lac, t.cell_id)] = t
+
+        return DeviceCellHistory(
+            device_id="xref-query",
+            pings=pings,
+            towers_visited=list(unique.values()),
+            first_seen=first_ts,
+            last_seen=last_ts,
+            summary=(
+                f"Cross-referenced {len(cell_ids)} cell IDs → "
+                f"{len(unique)} unique towers resolved."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # OpenCelliD helpers
+    # ------------------------------------------------------------------
+
+    async def _fetch_opencellid_towers(
+        self, location: GeoLocation, radius_km: float,
+    ) -> list[CellTower]:
+        """Query OpenCelliD / Unwired Labs nearby cell tower API."""
+        if not self._settings.opencellid_api_key:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    f"{self._settings.opencellid_base_url}/process.php",
+                    json={
+                        "token": self._settings.opencellid_api_key,
+                        "radio": "omit",
+                        "mcc": 0,
+                        "mnc": 0,
+                        "cells": [],
+                        "wifi": [],
+                        "address": 0,
+                        "lat": location.latitude,
+                        "lon": location.longitude,
+                        "range": int(radius_km * 1000),
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            towers: list[CellTower] = []
+            for cell in data.get("cells", []):
+                towers.append(CellTower(
+                    mcc=int(cell.get("mcc", 0)),
+                    mnc=int(cell.get("mnc", 0)),
+                    lac=int(cell.get("lac", 0)),
+                    cell_id=int(cell.get("cid", 0)),
+                    latitude=float(cell.get("lat", 0)),
+                    longitude=float(cell.get("lon", 0)),
+                    range_m=float(cell.get("range", 0)),
+                    radio=cell.get("radio", ""),
+                    samples=int(cell.get("samples", 0)),
+                    source="opencellid",
+                ))
+            return towers
+        except httpx.HTTPError:
+            logger.exception("Failed to fetch OpenCelliD nearby towers")
+            return []
+
+    async def _lookup_opencellid(
+        self, mcc: int, mnc: int, lac: int, cell_id: int,
+    ) -> CellTower | None:
+        """Resolve a single cell tower via OpenCelliD / Unwired Labs."""
+        if not self._settings.opencellid_api_key:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"{self._settings.opencellid_base_url}/process.php",
+                    json={
+                        "token": self._settings.opencellid_api_key,
+                        "cells": [{"lac": lac, "cid": cell_id, "mcc": mcc, "mnc": mnc}],
+                        "address": 0,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            if data.get("status") == "ok":
+                return CellTower(
+                    mcc=mcc, mnc=mnc, lac=lac, cell_id=cell_id,
+                    latitude=float(data.get("lat", 0)),
+                    longitude=float(data.get("lon", 0)),
+                    range_m=float(data.get("accuracy", 0)),
+                    source="opencellid",
+                )
+        except httpx.HTTPError:
+            logger.debug("OpenCelliD lookup failed for %d/%d/%d/%d", mcc, mnc, lac, cell_id)
+        return None
+
+    # ------------------------------------------------------------------
+    # beaconDB helpers
+    # ------------------------------------------------------------------
+
+    async def _fetch_beacondb_towers(
+        self, location: GeoLocation, radius_km: float,
+    ) -> list[CellTower]:
+        """Query beaconDB geolocation API for nearby towers."""
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    f"{self._settings.beacondb_base_url}/geolocate",
+                    json={
+                        "cellTowers": [],
+                        "wifiAccessPoints": [],
+                        "fallbacks": {"lacf": True},
+                    },
+                )
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
+
+            # beaconDB returns a single resolved location; we cannot
+            # enumerate towers from it, but we record the response if useful.
+            lat = data.get("location", {}).get("lat")
+            lng = data.get("location", {}).get("lng")
+            if lat is not None and lng is not None:
+                dist = _haversine_km(location.latitude, location.longitude, lat, lng)
+                if dist <= radius_km:
+                    return [CellTower(
+                        mcc=0, mnc=0, lac=0, cell_id=0,
+                        latitude=lat, longitude=lng,
+                        range_m=float(data.get("accuracy", 0)),
+                        source="beacondb",
+                    )]
+            return []
+        except httpx.HTTPError:
+            logger.debug("beaconDB query failed")
+            return []
+
+    async def _lookup_beacondb(
+        self, mcc: int, mnc: int, lac: int, cell_id: int,
+    ) -> CellTower | None:
+        """Resolve a cell tower via beaconDB geolocation."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(
+                    f"{self._settings.beacondb_base_url}/geolocate",
+                    json={
+                        "cellTowers": [{
+                            "mobileCountryCode": mcc,
+                            "mobileNetworkCode": mnc,
+                            "locationAreaCode": lac,
+                            "cellId": cell_id,
+                        }],
+                    },
+                )
+                if resp.status_code != 200:
+                    return None
+                data = resp.json()
+            lat = data.get("location", {}).get("lat")
+            lng = data.get("location", {}).get("lng")
+            if lat is not None and lng is not None:
+                return CellTower(
+                    mcc=mcc, mnc=mnc, lac=lac, cell_id=cell_id,
+                    latitude=lat, longitude=lng,
+                    range_m=float(data.get("accuracy", 0)),
+                    source="beacondb",
+                )
+        except httpx.HTTPError:
+            logger.debug("beaconDB lookup failed for %d/%d/%d/%d", mcc, mnc, lac, cell_id)
+        return None
+
+    # ------------------------------------------------------------------
+    # WiGLE helpers
+    # ------------------------------------------------------------------
+
+    async def _fetch_wigle_towers(
+        self, location: GeoLocation, radius_km: float,
+    ) -> list[CellTower]:
+        """Query WiGLE cell tower search API for towers near a location."""
+        if not self._settings.wigle_api_key:
+            return []
+
+        # Compute lat/lon bounding box
+        delta_lat = radius_km / 111.0
+        delta_lon = radius_km / (111.0 * max(math.cos(math.radians(location.latitude)), 0.01))
+
+        try:
+            headers = self._wigle_auth_headers()
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{self._settings.wigle_base_url}/cell/search",
+                    params={
+                        "latrange1": location.latitude - delta_lat,
+                        "latrange2": location.latitude + delta_lat,
+                        "longrange1": location.longitude - delta_lon,
+                        "longrange2": location.longitude + delta_lon,
+                        "resultsPerPage": 100,
+                    },
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            towers: list[CellTower] = []
+            for r in data.get("results", [])[:100]:
+                rid = r.get("id", {}) if isinstance(r.get("id"), dict) else {}
+                towers.append(CellTower(
+                    mcc=int(rid.get("mcc", 0)),
+                    mnc=int(rid.get("mnc", 0)),
+                    lac=int(rid.get("lac", 0)),
+                    cell_id=int(rid.get("cid", 0)),
+                    latitude=float(r.get("trilat", 0)),
+                    longitude=float(r.get("trilong", 0)),
+                    radio=r.get("type", ""),
+                    operator=r.get("operator", ""),
+                    source="wigle",
+                    last_seen=float(r.get("lasttime", 0)) if r.get("lasttime") else 0,
+                ))
+            return towers
+        except httpx.HTTPError:
+            logger.exception("Failed to fetch WiGLE cell tower data")
+            return []
+
+    async def _lookup_wigle(
+        self, mcc: int, mnc: int, lac: int, cell_id: int,
+    ) -> CellTower | None:
+        """Search WiGLE for a specific cell tower by its identifiers."""
+        if not self._settings.wigle_api_key:
+            return None
+        try:
+            headers = self._wigle_auth_headers()
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{self._settings.wigle_base_url}/cell/search",
+                    params={
+                        "cellId": cell_id,
+                        "lac": lac,
+                        "mcc": mcc,
+                        "mnc": mnc,
+                        "resultsPerPage": 1,
+                    },
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            results = data.get("results", [])
+            if results:
+                r = results[0]
+                return CellTower(
+                    mcc=mcc, mnc=mnc, lac=lac, cell_id=cell_id,
+                    latitude=float(r.get("trilat", 0)),
+                    longitude=float(r.get("trilong", 0)),
+                    radio=r.get("type", ""),
+                    operator=r.get("operator", ""),
+                    source="wigle",
+                )
+        except httpx.HTTPError:
+            logger.debug("WiGLE lookup failed for %d/%d/%d/%d", mcc, mnc, lac, cell_id)
+        return None
+
+    def _wigle_auth_headers(self) -> dict[str, str]:
+        """Build WiGLE authorization headers from the configured API key."""
+        key = self._settings.wigle_api_key
+        # If it looks like "user:pass" encode as Basic auth
+        if ":" in key:
+            encoded = base64.b64encode(key.encode()).decode()
+            return {"Authorization": f"Basic {encoded}"}
+        return {"Authorization": f"Basic {key}"}
+
+    # ------------------------------------------------------------------
     # Nearby cameras
     # ------------------------------------------------------------------
 
@@ -423,3 +843,79 @@ class TrackingService:
                 timestamp=now - 14400, source="demo", severity="property",
             ),
         ]
+
+    @staticmethod
+    def _demo_cell_towers(location: GeoLocation) -> list[CellTower]:
+        """Generate demo cell tower data around a location."""
+        return [
+            CellTower(
+                mcc=310, mnc=410, lac=30000, cell_id=12345,
+                latitude=location.latitude + 0.008,
+                longitude=location.longitude - 0.005,
+                range_m=1500, radio="LTE", operator="AT&T",
+                source="demo", signal_strength=-65, samples=1200,
+                last_seen=time.time() - 120,
+            ),
+            CellTower(
+                mcc=310, mnc=260, lac=30001, cell_id=23456,
+                latitude=location.latitude - 0.004,
+                longitude=location.longitude + 0.007,
+                range_m=2200, radio="LTE", operator="T-Mobile",
+                source="demo", signal_strength=-72, samples=890,
+                last_seen=time.time() - 300,
+            ),
+            CellTower(
+                mcc=311, mnc=480, lac=30002, cell_id=34567,
+                latitude=location.latitude + 0.003,
+                longitude=location.longitude + 0.009,
+                range_m=3000, radio="5G-NR", operator="Verizon",
+                source="demo", signal_strength=-58, samples=2100,
+                last_seen=time.time() - 60,
+            ),
+            CellTower(
+                mcc=310, mnc=410, lac=30003, cell_id=45678,
+                latitude=location.latitude - 0.006,
+                longitude=location.longitude - 0.003,
+                range_m=1800, radio="UMTS", operator="AT&T",
+                source="demo", signal_strength=-80, samples=450,
+                last_seen=time.time() - 600,
+            ),
+            CellTower(
+                mcc=310, mnc=260, lac=30004, cell_id=56789,
+                latitude=location.latitude + 0.010,
+                longitude=location.longitude + 0.002,
+                range_m=2500, radio="GSM", operator="T-Mobile",
+                source="demo", signal_strength=-88, samples=320,
+                last_seen=time.time() - 900,
+            ),
+        ]
+
+    @staticmethod
+    def _demo_cdr_pings(phone_number: str) -> list[CellTowerPing]:
+        """Generate simulated CDR (Call Detail Record) pings for a phone number.
+
+        In a production system these would come from a lawful-intercept feed or
+        CDR database provided by the telecom operator.
+        """
+        now = time.time()
+        device_id = f"dev-{phone_number[-4:]}" if len(phone_number) >= 4 else "dev-0000"
+
+        towers = [
+            CellTower(mcc=310, mnc=410, lac=30000, cell_id=12345, radio="LTE", source="cdr"),
+            CellTower(mcc=310, mnc=410, lac=30001, cell_id=12346, radio="LTE", source="cdr"),
+            CellTower(mcc=310, mnc=260, lac=30010, cell_id=23456, radio="LTE", source="cdr"),
+            CellTower(mcc=311, mnc=480, lac=30020, cell_id=34567, radio="5G-NR", source="cdr"),
+            CellTower(mcc=310, mnc=260, lac=30010, cell_id=23457, radio="LTE", source="cdr"),
+            CellTower(mcc=310, mnc=410, lac=30000, cell_id=12345, radio="LTE", source="cdr"),
+        ]
+
+        pings: list[CellTowerPing] = []
+        for i, tower in enumerate(towers):
+            pings.append(CellTowerPing(
+                cell_tower=tower,
+                timestamp=now - (len(towers) - i) * 3600,  # spaced 1 hour apart
+                signal_dbm=-60 - i * 5,
+                device_id=device_id,
+                phone_number=phone_number,
+            ))
+        return pings
