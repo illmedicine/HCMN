@@ -536,3 +536,251 @@ export async function getNetworkDevices() {
     return demoLayout().devices;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Module 4 – Gotham: Knowledge Graph & Link Analysis
+// ---------------------------------------------------------------------------
+
+function demoOntology() {
+  const now = Date.now();
+  const day = 86400000;
+  const hr = 3600000;
+
+  // ── OBJECTS (Nodes) ──
+  const objects = [
+    // People
+    { id: 'p-001', type: 'person', label: 'Marcus Chen', properties: { age: 34, occupation: 'Software Engineer', employer: 'org-001', phone: '+1-555-0101', email: 'mchen@example.com', risk_score: 0.12 }, geo: { lat: 40.7128, lon: -74.006 }, created: now - 90 * day },
+    { id: 'p-002', type: 'person', label: 'Elena Volkov', properties: { age: 29, occupation: 'Data Analyst', employer: 'org-002', phone: '+1-555-0202', email: 'evolkov@example.com', risk_score: 0.08 }, geo: { lat: 40.7580, lon: -73.985 }, created: now - 85 * day },
+    { id: 'p-003', type: 'person', label: 'James Okafor', properties: { age: 41, occupation: 'Financial Advisor', employer: 'org-003', phone: '+1-555-0303', email: 'jokafor@example.com', risk_score: 0.45 }, geo: { lat: 40.7488, lon: -73.968 }, created: now - 120 * day },
+    { id: 'p-004', type: 'person', label: 'Sarah Kim', properties: { age: 37, occupation: 'Attorney', employer: 'org-004', phone: '+1-555-0404', email: 'skim@example.com', risk_score: 0.05 }, geo: { lat: 40.7282, lon: -73.794 }, created: now - 60 * day },
+    { id: 'p-005', type: 'person', label: 'Dmitri Petrov', properties: { age: 52, occupation: 'Import/Export', employer: 'org-005', phone: '+1-555-0505', email: 'dpetrov@example.com', risk_score: 0.72 }, geo: { lat: 40.6892, lon: -74.044 }, created: now - 200 * day },
+    { id: 'p-006', type: 'person', label: 'Aisha Patel', properties: { age: 31, occupation: 'Journalist', employer: 'org-006', phone: '+1-555-0606', email: 'apatel@example.com', risk_score: 0.15 }, geo: { lat: 40.7527, lon: -73.977 }, created: now - 45 * day },
+    { id: 'p-007', type: 'person', label: 'Carlos Mendez', properties: { age: 44, occupation: 'Real Estate Developer', employer: 'org-007', phone: '+1-555-0707', email: 'cmendez@example.com', risk_score: 0.58 }, geo: { lat: 40.7614, lon: -73.977 }, created: now - 150 * day },
+    { id: 'p-008', type: 'person', label: 'Li Wei', properties: { age: 38, occupation: 'Logistics Manager', employer: 'org-005', phone: '+1-555-0808', email: 'lwei@example.com', risk_score: 0.61 }, geo: { lat: 40.7081, lon: -74.008 }, created: now - 130 * day },
+
+    // Organizations
+    { id: 'org-001', type: 'organization', label: 'Nexus Technologies', properties: { industry: 'Technology', employees: 2500, founded: 2012, revenue: '$340M', hq: 'New York, NY' }, geo: { lat: 40.7484, lon: -73.985 }, created: now - 300 * day },
+    { id: 'org-002', type: 'organization', label: 'Meridian Analytics', properties: { industry: 'Data Science', employees: 180, founded: 2018, revenue: '$28M', hq: 'Brooklyn, NY' }, geo: { lat: 40.6782, lon: -73.944 }, created: now - 200 * day },
+    { id: 'org-003', type: 'organization', label: 'Apex Capital Group', properties: { industry: 'Finance', employees: 45, founded: 2015, revenue: '$95M AUM', hq: 'Manhattan, NY' }, geo: { lat: 40.7580, lon: -73.969 }, created: now - 250 * day },
+    { id: 'org-004', type: 'organization', label: 'Sterling & Associates', properties: { industry: 'Legal', employees: 320, founded: 1998, revenue: '$210M', hq: 'Midtown, NY' }, geo: { lat: 40.7549, lon: -73.984 }, created: now - 350 * day },
+    { id: 'org-005', type: 'organization', label: 'Global Transit LLC', properties: { industry: 'Logistics', employees: 90, founded: 2016, revenue: '$52M', hq: 'Red Hook, Brooklyn' }, geo: { lat: 40.6730, lon: -74.008 }, created: now - 180 * day },
+    { id: 'org-006', type: 'organization', label: 'Metro Pulse Media', properties: { industry: 'Media', employees: 120, founded: 2020, revenue: '$15M', hq: 'SoHo, NY' }, geo: { lat: 40.7233, lon: -74.000 }, created: now - 100 * day },
+    { id: 'org-007', type: 'organization', label: 'Ironclad Properties', properties: { industry: 'Real Estate', employees: 35, founded: 2014, revenue: '$120M', hq: 'Jersey City, NJ' }, geo: { lat: 40.7178, lon: -74.043 }, created: now - 220 * day },
+
+    // Locations
+    { id: 'loc-001', type: 'location', label: '432 Park Avenue', properties: { type: 'Office Building', floors: 42, city: 'New York' }, geo: { lat: 40.7614, lon: -73.972 }, created: now - 300 * day },
+    { id: 'loc-002', type: 'location', label: 'Red Hook Warehouse 7', properties: { type: 'Warehouse', sqft: 45000, city: 'Brooklyn' }, geo: { lat: 40.6730, lon: -74.010 }, created: now - 180 * day },
+    { id: 'loc-003', type: 'location', label: 'JFK Airport Terminal 4', properties: { type: 'Airport Terminal', city: 'Queens' }, geo: { lat: 40.6413, lon: -73.778 }, created: now - 250 * day },
+    { id: 'loc-004', type: 'location', label: 'Pier 17, South Street Seaport', properties: { type: 'Commercial Pier', city: 'Manhattan' }, geo: { lat: 40.7063, lon: -74.002 }, created: now - 150 * day },
+
+    // Financial accounts
+    { id: 'acct-001', type: 'account', label: 'Acct ***4821', properties: { bank: 'Chase', type: 'Business Checking', balance: '$2.4M', opened: '2016-03-15' }, created: now - 200 * day },
+    { id: 'acct-002', type: 'account', label: 'Acct ***7733', properties: { bank: 'Chase', type: 'Personal Savings', balance: '$890K', opened: '2018-07-22' }, created: now - 150 * day },
+    { id: 'acct-003', type: 'account', label: 'Acct ***1199', properties: { bank: 'Citi', type: 'Business Checking', balance: '$5.1M', opened: '2017-11-08' }, created: now - 180 * day },
+    { id: 'acct-004', type: 'account', label: 'Offshore Acct ***6600', properties: { bank: 'HSBC Cayman', type: 'Trust Account', balance: '$12.8M', opened: '2019-02-14' }, created: now - 120 * day },
+
+    // Devices / comms
+    { id: 'dev-g1', type: 'device', label: 'Phone +1-555-0505', properties: { type: 'mobile', carrier: 'T-Mobile', imei: '352099001761481' }, created: now - 200 * day },
+    { id: 'dev-g2', type: 'device', label: 'Phone +1-555-0707', properties: { type: 'mobile', carrier: 'Verizon', imei: '356938035643809' }, created: now - 180 * day },
+    { id: 'dev-g3', type: 'device', label: 'Burner Phone #1', properties: { type: 'prepaid', carrier: 'Unknown', imei: '000000000000000' }, created: now - 30 * day },
+    { id: 'dev-g4', type: 'device', label: 'Laptop MAC:3C:D9:2B', properties: { type: 'laptop', os: 'Windows 11' }, created: now - 90 * day },
+
+    // Vehicles
+    { id: 'veh-001', type: 'vehicle', label: 'Black Mercedes S-Class', properties: { plate: 'NY-XKR-4821', vin: 'WDDNG8GB5BA375283', color: 'Black', year: 2023 }, created: now - 60 * day },
+    { id: 'veh-002', type: 'vehicle', label: 'White Sprinter Van', properties: { plate: 'NJ-GTR-1199', vin: 'WD3PE7CD5BP529614', color: 'White', year: 2021 }, created: now - 45 * day },
+
+    // Events
+    { id: 'evt-001', type: 'event', label: 'Wire Transfer $2.1M', properties: { amount: '$2,100,000', from: 'acct-001', to: 'acct-004', date: new Date(now - 15 * day).toISOString() }, geo: { lat: 40.758, lon: -73.969 }, created: now - 15 * day },
+    { id: 'evt-002', type: 'event', label: 'Meeting at Pier 17', properties: { date: new Date(now - 10 * day).toISOString(), duration: '45 min', attendees: 3 }, geo: { lat: 40.7063, lon: -74.002 }, created: now - 10 * day },
+    { id: 'evt-003', type: 'event', label: 'Warehouse Shipment Received', properties: { date: new Date(now - 8 * day).toISOString(), manifest: 'GLTR-2026-0847', containers: 3, origin: 'Rotterdam, NL' }, geo: { lat: 40.6730, lon: -74.010 }, created: now - 8 * day },
+    { id: 'evt-004', type: 'event', label: 'Cash Deposit $480K', properties: { amount: '$480,000', account: 'acct-003', date: new Date(now - 5 * day).toISOString(), branch: 'Citi Midtown' }, geo: { lat: 40.755, lon: -73.984 }, created: now - 5 * day },
+    { id: 'evt-005', type: 'event', label: 'JFK Customs Flag', properties: { date: new Date(now - 3 * day).toISOString(), flight: 'KL641', origin: 'Amsterdam', alert: 'Watchlist Match' }, geo: { lat: 40.6413, lon: -73.778 }, created: now - 3 * day },
+  ];
+
+  // ── LINKS (Edges) ──
+  const links = [
+    // Employment
+    { id: 'l-001', source: 'p-001', target: 'org-001', type: 'employed_by', label: 'Senior Engineer', properties: { since: '2019' }, weight: 0.6 },
+    { id: 'l-002', source: 'p-002', target: 'org-002', type: 'employed_by', label: 'Lead Analyst', properties: { since: '2021' }, weight: 0.6 },
+    { id: 'l-003', source: 'p-003', target: 'org-003', type: 'employed_by', label: 'Managing Director', properties: { since: '2015' }, weight: 0.8 },
+    { id: 'l-004', source: 'p-004', target: 'org-004', type: 'employed_by', label: 'Partner', properties: { since: '2012' }, weight: 0.7 },
+    { id: 'l-005', source: 'p-005', target: 'org-005', type: 'owns', label: 'Majority Owner (72%)', properties: { stake: 0.72, since: '2016' }, weight: 0.95 },
+    { id: 'l-006', source: 'p-006', target: 'org-006', type: 'employed_by', label: 'Investigative Reporter', properties: { since: '2023' }, weight: 0.5 },
+    { id: 'l-007', source: 'p-007', target: 'org-007', type: 'owns', label: 'CEO & Founder', properties: { stake: 0.85, since: '2014' }, weight: 0.95 },
+    { id: 'l-008', source: 'p-008', target: 'org-005', type: 'employed_by', label: 'Operations Manager', properties: { since: '2018' }, weight: 0.7 },
+
+    // Personal connections
+    { id: 'l-009', source: 'p-001', target: 'p-002', type: 'knows', label: 'Dating', properties: { since: '2024' }, weight: 0.8 },
+    { id: 'l-010', source: 'p-003', target: 'p-005', type: 'knows', label: 'Business Partners', properties: { since: '2017' }, weight: 0.9 },
+    { id: 'l-011', source: 'p-005', target: 'p-007', type: 'knows', label: 'Associates', properties: { since: '2018', context: 'Real estate deals' }, weight: 0.85 },
+    { id: 'l-012', source: 'p-005', target: 'p-008', type: 'knows', label: 'Boss/Employee', properties: { since: '2018' }, weight: 0.75 },
+    { id: 'l-013', source: 'p-003', target: 'p-004', type: 'knows', label: 'Client/Attorney', properties: { since: '2020' }, weight: 0.6 },
+    { id: 'l-014', source: 'p-006', target: 'p-001', type: 'knows', label: 'Source/Journalist', properties: { since: '2025' }, weight: 0.4 },
+
+    // Financial links
+    { id: 'l-015', source: 'p-005', target: 'acct-001', type: 'owns_account', label: 'Signatory', properties: {}, weight: 0.9 },
+    { id: 'l-016', source: 'p-003', target: 'acct-002', type: 'owns_account', label: 'Account Holder', properties: {}, weight: 0.8 },
+    { id: 'l-017', source: 'org-005', target: 'acct-003', type: 'owns_account', label: 'Business Account', properties: {}, weight: 0.85 },
+    { id: 'l-018', source: 'p-007', target: 'acct-004', type: 'owns_account', label: 'Beneficial Owner', properties: {}, weight: 0.95 },
+    { id: 'l-019', source: 'acct-001', target: 'acct-004', type: 'transferred_to', label: '$2.1M Wire', properties: { amount: 2100000, date: new Date(now - 15 * day).toISOString() }, weight: 1.0 },
+    { id: 'l-020', source: 'acct-003', target: 'acct-001', type: 'transferred_to', label: '$350K Transfer', properties: { amount: 350000, date: new Date(now - 22 * day).toISOString() }, weight: 0.7 },
+
+    // Location links
+    { id: 'l-021', source: 'org-003', target: 'loc-001', type: 'located_at', label: 'Office Suite 3801', properties: {}, weight: 0.6 },
+    { id: 'l-022', source: 'org-005', target: 'loc-002', type: 'leases', label: 'Primary Warehouse', properties: { since: '2019', rent: '$18K/mo' }, weight: 0.7 },
+    { id: 'l-023', source: 'p-005', target: 'loc-003', type: 'visited', label: 'JFK arrival', properties: { date: new Date(now - 3 * day).toISOString(), flight: 'KL641' }, weight: 0.5 },
+    { id: 'l-024', source: 'p-008', target: 'loc-002', type: 'visited', label: 'Warehouse visit', properties: { date: new Date(now - 8 * day).toISOString(), duration: '3 hrs' }, weight: 0.6 },
+
+    // Device ownership
+    { id: 'l-025', source: 'p-005', target: 'dev-g1', type: 'uses', label: 'Primary Phone', properties: {}, weight: 0.8 },
+    { id: 'l-026', source: 'p-007', target: 'dev-g2', type: 'uses', label: 'Primary Phone', properties: {}, weight: 0.8 },
+    { id: 'l-027', source: 'p-008', target: 'dev-g3', type: 'uses', label: 'Seen with device', properties: { first_seen: new Date(now - 25 * day).toISOString() }, weight: 0.5 },
+
+    // Communication
+    { id: 'l-028', source: 'dev-g1', target: 'dev-g2', type: 'communicated', label: '17 calls, 43 texts', properties: { calls: 17, texts: 43, period: '30 days' }, weight: 0.9 },
+    { id: 'l-029', source: 'dev-g3', target: 'dev-g1', type: 'communicated', label: '6 calls', properties: { calls: 6, texts: 0, period: '10 days' }, weight: 0.7 },
+    { id: 'l-030', source: 'dev-g3', target: 'dev-g2', type: 'communicated', label: '3 calls', properties: { calls: 3, texts: 2, period: '10 days' }, weight: 0.5 },
+
+    // Vehicle links
+    { id: 'l-031', source: 'p-005', target: 'veh-001', type: 'owns', label: 'Registered Owner', properties: {}, weight: 0.8 },
+    { id: 'l-032', source: 'org-005', target: 'veh-002', type: 'owns', label: 'Fleet Vehicle', properties: {}, weight: 0.7 },
+    { id: 'l-033', source: 'veh-002', target: 'loc-002', type: 'seen_at', label: 'ALPR hit', properties: { date: new Date(now - 8 * day).toISOString() }, weight: 0.6 },
+    { id: 'l-034', source: 'veh-001', target: 'loc-004', type: 'seen_at', label: 'ALPR hit', properties: { date: new Date(now - 10 * day).toISOString() }, weight: 0.5 },
+
+    // Event connections
+    { id: 'l-035', source: 'p-005', target: 'evt-001', type: 'initiated', label: 'Authorized Transfer', properties: {}, weight: 0.9 },
+    { id: 'l-036', source: 'p-005', target: 'evt-002', type: 'attended', label: 'Present', properties: {}, weight: 0.7 },
+    { id: 'l-037', source: 'p-007', target: 'evt-002', type: 'attended', label: 'Present', properties: {}, weight: 0.7 },
+    { id: 'l-038', source: 'p-008', target: 'evt-002', type: 'attended', label: 'Present', properties: {}, weight: 0.7 },
+    { id: 'l-039', source: 'p-008', target: 'evt-003', type: 'received', label: 'Signed Manifest', properties: {}, weight: 0.8 },
+    { id: 'l-040', source: 'p-003', target: 'evt-004', type: 'initiated', label: 'Cash Deposit', properties: {}, weight: 0.85 },
+    { id: 'l-041', source: 'p-005', target: 'evt-005', type: 'flagged_at', label: 'Customs Alert', properties: {}, weight: 0.95 },
+
+    // Org-to-org
+    { id: 'l-042', source: 'org-005', target: 'org-007', type: 'contracted_by', label: 'Logistics Provider', properties: { contract_value: '$1.2M/yr' }, weight: 0.7 },
+    { id: 'l-043', source: 'org-003', target: 'org-005', type: 'invested_in', label: 'Series A Investor', properties: { amount: '$4M', date: '2017' }, weight: 0.8 },
+  ];
+
+  return { objects, links };
+}
+
+function demoGothamTimeline() {
+  const now = Date.now();
+  const day = 86400000;
+  return [
+    { id: 'tl-1', date: new Date(now - 90 * day).toISOString(), label: 'Global Transit LLC incorporated', type: 'org_created', entity: 'org-005', severity: 'low' },
+    { id: 'tl-2', date: new Date(now - 60 * day).toISOString(), label: 'Apex Capital invests $4M in Global Transit', type: 'financial', entity: 'org-003', severity: 'medium' },
+    { id: 'tl-3', date: new Date(now - 30 * day).toISOString(), label: 'Burner phone activated near Red Hook', type: 'device', entity: 'dev-g3', severity: 'high' },
+    { id: 'tl-4', date: new Date(now - 22 * day).toISOString(), label: '$350K transfer from Global Transit to Petrov account', type: 'financial', entity: 'acct-003', severity: 'high' },
+    { id: 'tl-5', date: new Date(now - 15 * day).toISOString(), label: '$2.1M wire to offshore account (Cayman)', type: 'financial', entity: 'evt-001', severity: 'critical' },
+    { id: 'tl-6', date: new Date(now - 10 * day).toISOString(), label: 'Three-person meeting at Pier 17', type: 'meeting', entity: 'evt-002', severity: 'medium' },
+    { id: 'tl-7', date: new Date(now - 8 * day).toISOString(), label: 'Shipment from Rotterdam received at warehouse', type: 'logistics', entity: 'evt-003', severity: 'high' },
+    { id: 'tl-8', date: new Date(now - 5 * day).toISOString(), label: '$480K cash deposit at Citi Midtown', type: 'financial', entity: 'evt-004', severity: 'critical' },
+    { id: 'tl-9', date: new Date(now - 3 * day).toISOString(), label: 'Petrov flagged at JFK Customs (KL641 from Amsterdam)', type: 'alert', entity: 'evt-005', severity: 'critical' },
+    { id: 'tl-10', date: new Date(now - 1 * day).toISOString(), label: 'ALPR: Mercedes S-Class near Pier 17', type: 'surveillance', entity: 'veh-001', severity: 'medium' },
+  ];
+}
+
+export async function getOntology() {
+  try {
+    return await tryFetch(`${API_BASE}/gotham/ontology`);
+  } catch {
+    return demoOntology();
+  }
+}
+
+export async function getGothamTimeline() {
+  try {
+    return await tryFetch(`${API_BASE}/gotham/timeline`);
+  } catch {
+    return demoGothamTimeline();
+  }
+}
+
+export async function searchOntology(query) {
+  try {
+    return await tryFetch(`${API_BASE}/gotham/search?q=${encodeURIComponent(query)}`);
+  } catch {
+    const { objects, links } = demoOntology();
+    const q = query.toLowerCase();
+    const matched = objects.filter(o =>
+      o.label.toLowerCase().includes(q) ||
+      o.type.toLowerCase().includes(q) ||
+      Object.values(o.properties || {}).some(v => String(v).toLowerCase().includes(q))
+    );
+    const matchedIds = new Set(matched.map(o => o.id));
+    const relLinks = links.filter(l => matchedIds.has(l.source) || matchedIds.has(l.target));
+    return { objects: matched, links: relLinks };
+  }
+}
+
+export async function expandNode(nodeId, depth = 1) {
+  try {
+    return await tryFetch(`${API_BASE}/gotham/expand?node=${encodeURIComponent(nodeId)}&depth=${depth}`);
+  } catch {
+    const { objects, links } = demoOntology();
+    const visited = new Set();
+    const queue = [nodeId];
+    const resultNodes = [];
+    const resultLinks = [];
+
+    for (let d = 0; d <= depth && queue.length > 0; d++) {
+      const nextQueue = [];
+      for (const nid of queue) {
+        if (visited.has(nid)) continue;
+        visited.add(nid);
+        const node = objects.find(o => o.id === nid);
+        if (node) resultNodes.push(node);
+        for (const link of links) {
+          if (link.source === nid && !visited.has(link.target)) {
+            resultLinks.push(link);
+            nextQueue.push(link.target);
+          }
+          if (link.target === nid && !visited.has(link.source)) {
+            resultLinks.push(link);
+            nextQueue.push(link.source);
+          }
+        }
+      }
+      queue.length = 0;
+      queue.push(...nextQueue);
+    }
+    return { objects: resultNodes, links: resultLinks };
+  }
+}
+
+export async function getShortestPath(fromId, toId) {
+  try {
+    return await tryFetch(`${API_BASE}/gotham/path?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(toId)}`);
+  } catch {
+    const { objects, links } = demoOntology();
+    // BFS shortest path
+    const adj = {};
+    for (const l of links) {
+      if (!adj[l.source]) adj[l.source] = [];
+      if (!adj[l.target]) adj[l.target] = [];
+      adj[l.source].push({ node: l.target, link: l });
+      adj[l.target].push({ node: l.source, link: l });
+    }
+    const visited = new Set([fromId]);
+    const queue = [[fromId, []]];
+    while (queue.length) {
+      const [current, path] = queue.shift();
+      if (current === toId) {
+        const pathNodes = [fromId, ...path.map(p => p.node)];
+        return {
+          nodes: pathNodes.map(id => objects.find(o => o.id === id)).filter(Boolean),
+          links: path.map(p => p.link),
+          length: path.length,
+        };
+      }
+      for (const neighbor of (adj[current] || [])) {
+        if (!visited.has(neighbor.node)) {
+          visited.add(neighbor.node);
+          queue.push([neighbor.node, [...path, neighbor]]);
+        }
+      }
+    }
+    return { nodes: [], links: [], length: -1 };
+  }
+}

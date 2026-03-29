@@ -3,12 +3,14 @@ import CameraPanel from './components/CameraPanel';
 import TrackingPanel from './components/TrackingPanel';
 import SpectrumPanel from './components/SpectrumPanel';
 import CSIPanel from './components/CSIPanel';
+import GothamPanel from './components/GothamPanel';
 import './styles/dashboard.css';
 
 const MODULES = [
   { id: 'cameras', label: '📹 Module 1 – Video Deck', shortLabel: 'Video' },
   { id: 'tracking', label: '🌍 Module 2 – Tracking', shortLabel: 'Tracking' },
   { id: 'csi', label: '📶 Module 3 – Wi-Fi CSI', shortLabel: 'CSI' },
+  { id: 'gotham', label: '🔮 Module 4 – Gotham', shortLabel: 'Gotham' },
   { id: 'spectrum', label: '📡 RF Spectrum', shortLabel: 'Spectrum' },
 ];
 
@@ -49,6 +51,7 @@ export default function App() {
           {standaloneModule === 'cameras' && <CameraPanel />}
           {standaloneModule === 'tracking' && <TrackingPanel />}
           {standaloneModule === 'csi' && <CSIPanel />}
+          {standaloneModule === 'gotham' && <GothamPanel />}
           {standaloneModule === 'spectrum' && <SpectrumPanel />}
         </main>
       </div>
@@ -93,6 +96,7 @@ export default function App() {
         {activeModule === 'cameras' && <CameraPanel />}
         {activeModule === 'tracking' && <TrackingPanel />}
         {activeModule === 'csi' && <CSIPanel />}
+        {activeModule === 'gotham' && <GothamPanel />}
         {activeModule === 'spectrum' && <SpectrumPanel />}
       </main>
     </div>
