@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { setOptions as gmpSetOptions, importLibrary } from '@googlemaps/js-api-loader';
 import { getGlobePOIs, getGlobeFlights, getGlobeSatellites, getGlobeConfig, setGlobeApiKey, sendChatMessage } from '../services/api';
 
 // ---------------------------------------------------------------------------
@@ -31,13 +30,27 @@ const SAT_TYPE_COLORS = {
 
 const STORAGE_KEY = 'hcmn_google_maps_api_key';
 const REQUIRED_APIS_FALLBACK = [
-  { name: 'Maps JavaScript API', url: 'https://console.cloud.google.com/apis/library/maps-backend.googleapis.com', description: 'Core map rendering, markers, polylines, and controls' },
-  { name: 'Map Tiles API', url: 'https://console.cloud.google.com/apis/library/tile.googleapis.com', description: 'Photorealistic 3D Tiles for the 3D globe view' },
-  { name: 'Places API (New)', url: 'https://console.cloud.google.com/apis/library/places-backend.googleapis.com', description: 'Place cards, search, and autocomplete' },
+  { name: 'Maps JavaScript API', url: 'https://console.cloud.google.com/apis/library/maps-backend.googleapis.com', description: 'Core map rendering — required for all map views' },
 ];
 
-// Track whether setOptions has already been called (can only be called once)
-let gmpConfigured = false;
+// ---------------------------------------------------------------------------
+// Load Google Maps via dynamic script tag (most reliable method)
+// ---------------------------------------------------------------------------
+let _gmapPromise = null;
+function loadGoogleMaps(apiKey) {
+  if (_gmapPromise) return _gmapPromise;
+  _gmapPromise = new Promise((resolve, reject) => {
+    if (window.google?.maps?.Map) { resolve(window.google.maps); return; }
+    const script = document.createElement('script');
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=marker&v=weekly&callback=__gmapsReady`;
+    script.async = true;
+    script.defer = true;
+    window.__gmapsReady = () => { resolve(window.google.maps); delete window.__gmapsReady; };
+    script.onerror = () => reject(new Error('Failed to load Google Maps script'));
+    document.head.appendChild(script);
+  });
+  return _gmapPromise;
+}
 
 // ---------------------------------------------------------------------------
 // COMPONENT
@@ -47,8 +60,6 @@ export default function GlobePanel() {
   const map3dRef = useRef(null);
   const markersRef = useRef([]);
   const polylinesRef = useRef([]);
-  const mapsLibRef = useRef(null);
-  const maps3dLibRef = useRef(null);
   const is3dRef = useRef(false);
 
   const [apiKeyInput, setApiKeyInput] = useState('');
@@ -94,81 +105,56 @@ export default function GlobePanel() {
       .then(([p, f, s]) => { setPois(p); setFlights(f); setSatellites(s); });
   }, []);
 
-  // ── Init Google Maps (functional API v2) ────────────────────────────
+  // ── Init Google Maps (direct script tag, latest stable v=weekly) ──────
   useEffect(() => {
     if (!activeKey || !mapRef.current) return;
 
     setMapError('');
     setMapReady(false);
 
-    // setOptions can only be called once per page load
-    if (!gmpConfigured) {
-      gmpSetOptions({ key: activeKey, v: 'alpha' });
-      gmpConfigured = true;
-    }
-
-    // Listen for API auth errors (fires on bad key, missing APIs, etc.)
+    // Listen for API auth errors
     window.gm_authFailure = () => {
-      setMapError(
-        'Google Maps authentication failed. Verify your API key, '
-        + 'enabled APIs (Maps JavaScript API + Map Tiles API), and billing.'
-      );
+      setMapError('Google Maps authentication failed. Check your API key and ensure Maps JavaScript API is enabled.');
     };
 
-    // Clean up previous map content
+    // Clean up previous map
     clearOverlays();
     mapRef.current.innerHTML = '';
 
     (async () => {
       try {
-        const [mapsLib, maps3dLib, markerLib] = await Promise.all([
-          importLibrary('maps'),
-          importLibrary('maps3d').catch(() => null),
-          importLibrary('marker'),
-        ]);
-        mapsLibRef.current = mapsLib;
-        maps3dLibRef.current = maps3dLib;
+        const gmaps = await loadGoogleMaps(activeKey);
 
-        if (viewMode === '3d' && maps3dLib?.Map3DElement) {
-          // Create the 3D map element via createElement + whenDefined
-          const el = document.createElement('gmp-map-3d');
-          el.style.cssText = 'display:block;width:100%;height:100%;min-height:400px;';
-          mapRef.current.appendChild(el);
+        // Create a container div for the map
+        const container = document.createElement('div');
+        container.style.cssText = 'width:100%;height:100%;min-height:400px;';
+        mapRef.current.appendChild(container);
 
-          // Wait for the custom element to fully upgrade
-          await customElements.whenDefined('gmp-map-3d');
+        const mapOptions = {
+          center: { lat: 20, lng: 0 },
+          zoom: 2,
+          mapTypeId: 'hybrid',
+          gestureHandling: 'greedy',
+          renderingType: gmaps.RenderingType?.VECTOR,
+          mapId: 'HCMN_GLOBE',
+        };
 
-          // Set camera properties after the element is live in the DOM
-          el.center = { lat: 37.4, lng: -122.1, altitude: 0 };
-          el.range = 25000000;
-          el.tilt = 0;
-          el.heading = 0;
-
-          map3dRef.current = el;
-          is3dRef.current = true;
-
-          console.log('[GlobePanel] 3D map created, dimensions:',
-            el.offsetWidth, 'x', el.offsetHeight);
-
-          setMapReady(true);
-        } else {
-          // Flat map needs a real div child
-          const container = document.createElement('div');
-          container.style.width = '100%';
-          container.style.height = '100%';
-          mapRef.current.appendChild(container);
-
-          const m = new mapsLib.Map(container, {
-            center: { lat: 20, lng: 0 },
-            zoom: 2,
-            mapTypeId: 'hybrid',
-            mapId: 'hcmn_globe',
-            gestureHandling: 'greedy',
-          });
-          map3dRef.current = m;
-          is3dRef.current = false;
-          setMapReady(true);
+        // 3D mode: vector map with tilt & heading for 3D buildings
+        if (viewMode === '3d') {
+          mapOptions.tilt = 45;
+          mapOptions.heading = 0;
+          mapOptions.tiltInteractionEnabled = true;
+          mapOptions.headingInteractionEnabled = true;
+          mapOptions.zoom = 3;
+          mapOptions.center = { lat: 30, lng: 0 };
         }
+
+        const m = new gmaps.Map(container, mapOptions);
+        map3dRef.current = m;
+        is3dRef.current = (viewMode === '3d');
+        setMapReady(true);
+
+        console.log('[GlobePanel] Map created, mode:', viewMode, 'rendering:', mapOptions.renderingType);
       } catch (err) {
         console.error('Google Maps load error:', err);
         setMapError(err.message || 'Failed to load Google Maps');
@@ -178,8 +164,8 @@ export default function GlobePanel() {
 
   // ── Clear & redraw overlays ────────────────────────────────────────────
   const clearOverlays = useCallback(() => {
-    markersRef.current.forEach(m => { if (m.setMap) m.setMap(null); else if (m.remove) m.remove(); });
-    polylinesRef.current.forEach(p => { if (p.setMap) p.setMap(null); else if (p.remove) p.remove(); });
+    markersRef.current.forEach(m => { if (m.map) m.map = null; else if (m.setMap) m.setMap(null); });
+    polylinesRef.current.forEach(p => { if (p.setMap) p.setMap(null); });
     markersRef.current = [];
     polylinesRef.current = [];
   }, []);
@@ -189,69 +175,40 @@ export default function GlobePanel() {
     clearOverlays();
     const google = window.google;
     const map = map3dRef.current;
-    const is3d = is3dRef.current;
 
-    // Helper: create marker
+    // Helper: create Advanced Marker
     function addMarker(lat, lng, title, color, icon, onClick) {
-      if (is3d) {
-        // 3D markers
-        if (google?.maps?.maps3d?.Marker3DElement) {
-          const m = new google.maps.maps3d.Marker3DElement({
-            position: { lat, lng, altitude: 0 },
-          });
-          map.appendChild(m);
-          markersRef.current.push(m);
-          if (onClick) m.addEventListener('gmp-click', onClick);
-        }
-      } else {
-        // Flat map — Advanced Marker
-        try {
-          const pin = new google.maps.marker.PinElement({
-            background: color,
-            borderColor: '#222',
-            glyphColor: '#fff',
-            scale: 1.1,
-          });
-          const m = new google.maps.marker.AdvancedMarkerElement({
-            map,
-            position: { lat, lng },
-            title,
-            content: pin,
-          });
-          markersRef.current.push(m);
-          if (onClick) m.addEventListener('gmp-click', onClick);
-        } catch (e) {
-          console.warn('Marker creation failed:', e);
-        }
+      try {
+        const pin = new google.maps.marker.PinElement({
+          background: color,
+          borderColor: '#222',
+          glyphColor: '#fff',
+          scale: 1.1,
+        });
+        const m = new google.maps.marker.AdvancedMarkerElement({
+          map,
+          position: { lat, lng },
+          title,
+          content: pin,
+        });
+        markersRef.current.push(m);
+        if (onClick) m.addEventListener('gmp-click', onClick);
+      } catch (e) {
+        console.warn('Marker creation failed:', e);
       }
     }
 
     // Helper: draw polyline
     function addPolyline(pathData, color, weight = 2) {
-      if (is3d) {
-        if (google?.maps?.maps3d?.Polyline3DElement) {
-          const coords = pathData.map(p => ({ lat: p.lat, lng: p.lng, altitude: (p.alt || 0) }));
-          const poly = new google.maps.maps3d.Polyline3DElement({
-            strokeColor: color,
-            strokeWidth: weight,
-            altitudeMode: 'ABSOLUTE',
-          });
-          // Use 'path' property (not deprecated 'coordinates')
-          poly.path = coords;
-          map.appendChild(poly);
-          polylinesRef.current.push(poly);
-        }
-      } else {
-        const poly = new google.maps.Polyline({
-          path: pathData.map(p => ({ lat: p.lat, lng: p.lng })),
-          strokeColor: color,
-          strokeWeight: weight,
-          strokeOpacity: 0.8,
-          geodesic: true,
-          map,
-        });
-        polylinesRef.current.push(poly);
-      }
+      const poly = new google.maps.Polyline({
+        path: pathData.map(p => ({ lat: p.lat, lng: p.lng })),
+        strokeColor: color,
+        strokeWeight: weight,
+        strokeOpacity: 0.8,
+        geodesic: true,
+        map,
+      });
+      polylinesRef.current.push(poly);
     }
 
     // -- POIs
@@ -286,8 +243,8 @@ export default function GlobePanel() {
       });
     }
 
-    // -- OSM tile overlay (flat map only)
-    if (layers.osm && !is3d && map.overlayMapTypes) {
+    // -- OSM tile overlay
+    if (layers.osm && map.overlayMapTypes) {
       const osmLayer = new google.maps.ImageMapType({
         getTileUrl: (coord, zoom) =>
           `https://tile.openstreetmap.org/${zoom}/${coord.x}/${coord.y}.png`,
@@ -305,14 +262,12 @@ export default function GlobePanel() {
   function flyTo(lat, lng, altitude = 1000) {
     if (!mapReady || !map3dRef.current) return;
     const map = map3dRef.current;
-    if (is3dRef.current) {
-      map.flyCameraTo({
-        endCamera: { center: { lat, lng, altitude: 0 }, range: altitude * 5, tilt: 55, heading: 0 },
-        durationMillis: 2500,
-      });
-    } else if (map.panTo) {
+    if (map.panTo) {
       map.panTo({ lat, lng });
-      map.setZoom(Math.max(6, 18 - Math.log2(altitude / 100)));
+      map.setZoom(Math.max(4, 18 - Math.log2(altitude / 100)));
+      if (is3dRef.current) {
+        map.setTilt(45);
+      }
     }
   }
 
