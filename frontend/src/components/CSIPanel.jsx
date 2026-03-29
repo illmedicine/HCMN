@@ -309,17 +309,14 @@ export default function CSIPanel() {
         const py = ty(p.y);
         const color = ACTIVITY_COLORS[p.activity] || '#f59e0b';
 
-        // Glow ring
-        const glow = ctx.createRadialGradient(px, py, 0, px, py, 22);
-        glow.addColorStop(0, color.replace(')', ', 0.35)').replace('#', 'rgba(') || `rgba(245,158,11,0.3)`);
-        // Parse hex to rgba
+        // Glow ring — parse hex to rgba
         const r = parseInt(color.slice(1, 3), 16);
         const g = parseInt(color.slice(3, 5), 16);
         const b = parseInt(color.slice(5, 7), 16);
-        const glow2 = ctx.createRadialGradient(px, py, 0, px, py, 22);
-        glow2.addColorStop(0, `rgba(${r},${g},${b},0.35)`);
-        glow2.addColorStop(1, 'transparent');
-        ctx.fillStyle = glow2;
+        const glow = ctx.createRadialGradient(px, py, 0, px, py, 22);
+        glow.addColorStop(0, `rgba(${r},${g},${b},0.35)`);
+        glow.addColorStop(1, 'transparent');
+        ctx.fillStyle = glow;
         ctx.beginPath();
         ctx.arc(px, py, 22, 0, Math.PI * 2);
         ctx.fill();
