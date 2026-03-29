@@ -103,9 +103,17 @@ export default function GlobePanel() {
 
     // setOptions can only be called once per page load
     if (!gmpConfigured) {
-      gmpSetOptions({ key: activeKey, v: 'alpha' });
+      gmpSetOptions({ key: activeKey });
       gmpConfigured = true;
     }
+
+    // Listen for API auth errors (fires on bad key, missing APIs, etc.)
+    window.gm_authFailure = () => {
+      setMapError(
+        'Google Maps authentication failed. Verify your API key, '
+        + 'enabled APIs (Maps JavaScript API + Map Tiles API), and billing.'
+      );
+    };
 
     // Clean up previous map content
     clearOverlays();
@@ -122,33 +130,25 @@ export default function GlobePanel() {
         maps3dLibRef.current = maps3dLib;
 
         if (viewMode === '3d' && maps3dLib?.Map3DElement) {
-          // Use innerHTML to create the element as a proper custom element
-          // (avoids constructor issues with Web Component lifecycle)
-          mapRef.current.innerHTML =
-            '<gmp-map-3d ' +
-            'center="0,0,0" ' +
-            'range="25000000" ' +
-            'tilt="0" ' +
-            'heading="0" ' +
-            'style="display:block;width:100%;height:100%;min-height:400px;">' +
-            '</gmp-map-3d>';
-          const el = mapRef.current.querySelector('gmp-map-3d');
+          // Create the 3D map element via createElement + whenDefined
+          const el = document.createElement('gmp-map-3d');
+          el.style.cssText = 'display:block;width:100%;height:100%;min-height:400px;';
+          mapRef.current.appendChild(el);
+
+          // Wait for the custom element to fully upgrade
+          await customElements.whenDefined('gmp-map-3d');
+
+          // Set camera properties after the element is live in the DOM
+          el.center = { lat: 37.4, lng: -122.1, altitude: 0 };
+          el.range = 25000000;
+          el.tilt = 0;
+          el.heading = 0;
 
           map3dRef.current = el;
           is3dRef.current = true;
 
-          // Listen for actual API errors (bad key, tiles API disabled, etc.)
-          window.gm_authFailure = () => {
-            setMapError(
-              'Google Maps authentication failed. Please verify: '
-              + '(1) Your API key is valid  '
-              + '(2) Maps JavaScript API & Map Tiles API are enabled  '
-              + '(3) Billing is enabled  '
-              + '(4) Your API key allows this domain — go to '
-              + 'console.cloud.google.com/apis/credentials, click your key, '
-              + 'and add "illmedicine.github.io/*" to HTTP referrer restrictions'
-            );
-          };
+          console.log('[GlobePanel] 3D map created, dimensions:',
+            el.offsetWidth, 'x', el.offsetHeight);
 
           setMapReady(true);
         } else {
