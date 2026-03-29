@@ -1,4 +1,6 @@
-const API_BASE = '/api';
+import * as satellite from 'satellite.js';
+
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 // ---------------------------------------------------------------------------
 // Helpers — try backend first, fall back to direct open-source APIs
@@ -1193,11 +1195,11 @@ export async function getShortestPath(fromId, toId) {
 }
 
 // ---------------------------------------------------------------------------
-// MODULE 5 — GLOBE  (Google Maps 3D + flight / satellite / OSM overlays)
+// MODULE 5 — GLOBE  (Real-time flights, satellites, vessels, POIs)
 // ---------------------------------------------------------------------------
 
-// Demo points of interest for the 3D globe
-function demoGlobePOIs() {
+// Reference POIs — real strategic locations (not demo data)
+function referenceGlobePOIs() {
   return [
     { id: 'poi-1', name: 'Pentagon', lat: 38.8719, lng: -77.0563, type: 'military', description: 'US Department of Defense HQ', icon: '🏛️' },
     { id: 'poi-2', name: 'Ramstein AB', lat: 49.4369, lng: 7.6003, type: 'military', description: 'USAF base in Germany', icon: '✈️' },
@@ -1212,71 +1214,117 @@ function demoGlobePOIs() {
   ];
 }
 
-// Demo flight tracks (great-circle style waypoints)
-function demoFlightTracks() {
-  return [
-    { id: 'flt-1', callsign: 'DUKE31', type: 'military', aircraft: 'KC-135R', origin: 'Ramstein AB', destination: 'Al Udeid AB',
-      waypoints: [
-        { lat: 49.44, lng: 7.60, alt: 10000, ts: Date.now() - 7200000 },
-        { lat: 45.00, lng: 15.00, alt: 11000, ts: Date.now() - 5400000 },
-        { lat: 38.00, lng: 28.00, alt: 11500, ts: Date.now() - 3600000 },
-        { lat: 30.00, lng: 40.00, alt: 11000, ts: Date.now() - 1800000 },
-        { lat: 25.22, lng: 51.57, alt: 5000, ts: Date.now() },
-      ]},
-    { id: 'flt-2', callsign: 'AAL247', type: 'commercial', aircraft: 'B777-300ER', origin: 'JFK', destination: 'LHR',
-      waypoints: [
-        { lat: 40.64, lng: -73.78, alt: 0, ts: Date.now() - 18000000 },
-        { lat: 43.00, lng: -60.00, alt: 11500, ts: Date.now() - 12000000 },
-        { lat: 50.00, lng: -40.00, alt: 11500, ts: Date.now() - 7200000 },
-        { lat: 52.50, lng: -20.00, alt: 11500, ts: Date.now() - 3600000 },
-        { lat: 51.47, lng: -0.46, alt: 2000, ts: Date.now() },
-      ]},
-    { id: 'flt-3', callsign: 'RCH871', type: 'military', aircraft: 'C-17A', origin: 'Dover AFB', destination: 'Ramstein AB',
-      waypoints: [
-        { lat: 39.13, lng: -75.47, alt: 0, ts: Date.now() - 14400000 },
-        { lat: 42.00, lng: -55.00, alt: 9000, ts: Date.now() - 10800000 },
-        { lat: 48.00, lng: -30.00, alt: 9500, ts: Date.now() - 7200000 },
-        { lat: 50.00, lng: -10.00, alt: 9500, ts: Date.now() - 3600000 },
-        { lat: 49.44, lng: 7.60, alt: 1500, ts: Date.now() },
-      ]},
-    { id: 'flt-4', callsign: 'UAE201', type: 'commercial', aircraft: 'A380-800', origin: 'DXB', destination: 'SYD',
-      waypoints: [
-        { lat: 25.25, lng: 55.36, alt: 0, ts: Date.now() - 36000000 },
-        { lat: 15.00, lng: 70.00, alt: 12000, ts: Date.now() - 28800000 },
-        { lat: 0.00, lng: 85.00, alt: 12000, ts: Date.now() - 21600000 },
-        { lat: -15.00, lng: 105.00, alt: 12000, ts: Date.now() - 14400000 },
-        { lat: -33.95, lng: 151.18, alt: 3000, ts: Date.now() },
-      ]},
-  ];
-}
-
-// Demo satellite constellation
-function demoGlobeSatellites() {
-  return [
-    { id: 'sat-1', name: 'ISS (ZARYA)', noradId: 25544, type: 'station', lat: 22.5, lng: -45.3, alt: 420, velocity: 7.66 },
-    { id: 'sat-2', name: 'GPS IIR-M 1', noradId: 28874, type: 'navigation', lat: 38.2, lng: 120.5, alt: 20180, velocity: 3.87 },
-    { id: 'sat-3', name: 'STARLINK-5001', noradId: 56001, type: 'communication', lat: -12.4, lng: 85.2, alt: 550, velocity: 7.59 },
-    { id: 'sat-4', name: 'USA-326 (KH-11)', noradId: 58001, type: 'reconnaissance', lat: 45.1, lng: -30.7, alt: 260, velocity: 7.72 },
-    { id: 'sat-5', name: 'MUOS-5', noradId: 41622, type: 'military-comms', lat: 0.1, lng: -100.0, alt: 35786, velocity: 3.07 },
-    { id: 'sat-6', name: 'SBIRS GEO-5', noradId: 49943, type: 'early-warning', lat: 0.0, lng: 60.0, alt: 35786, velocity: 3.07 },
-    { id: 'sat-7', name: 'NROL-82', noradId: 48500, type: 'reconnaissance', lat: 62.3, lng: 15.8, alt: 300, velocity: 7.70 },
-    { id: 'sat-8', name: 'Tianhe', noradId: 48274, type: 'station', lat: -18.9, lng: 140.2, alt: 390, velocity: 7.68 },
-  ];
-}
-
 export async function getGlobePOIs() {
   try { return await tryFetch(`${API_BASE}/globe/pois`); }
-  catch { return demoGlobePOIs(); } // POIs are reference data — no live API
+  catch { return referenceGlobePOIs(); }
 }
 
+/**
+ * Fetch ALL real-time global flights from OpenSky Network ADS-B.
+ * Returns { aircraft, count, timestamp, source }.
+ */
 export async function getGlobeFlights() {
-  try { return await tryFetch(`${API_BASE}/globe/flights`); }
-  catch { return demoFlightTracks(); } // Static reference tracks
+  // 1. Direct call to OpenSky — ALL global flights
+  try {
+    const data = await directFetch('https://opensky-network.org/api/states/all');
+    const aircraft = _parseOpenSkyStates(data.states);
+    return { aircraft, count: aircraft.length, timestamp: Date.now(), source: 'OpenSky ADS-B' };
+  } catch { /* direct failed */ }
+  // 2. Backend proxy
+  try {
+    return await tryFetch(`${API_BASE}/globe/live-flights`);
+  } catch {
+    return { aircraft: [], count: 0, error: 'OpenSky unreachable — check network or try again', source: 'none' };
+  }
 }
 
+/** Categorise a satellite from its CelesTrak GP name. */
+function _categorizeSat(name) {
+  const n = (name || '').toUpperCase();
+  if (n.includes('ISS') || n.includes('TIANGONG') || n.includes('TIANHE')) return 'station';
+  if (n.includes('GPS') || n.includes('NAVSTAR') || n.includes('GLONASS') || n.includes('GALILEO') || n.includes('BEIDOU')) return 'navigation';
+  if (n.includes('STARLINK') || n.includes('ONEWEB') || n.includes('IRIDIUM') || n.includes('INTELSAT')) return 'communication';
+  if (n.includes('NOAA') || n.includes('METEO') || n.includes('GOES') || n.includes('METOP')) return 'weather';
+  if (n.includes('USA-') || n.includes('NROL') || n.includes('MUOS') || n.includes('SBIRS') || n.includes('WGS')) return 'military';
+  return 'other';
+}
+
+/**
+ * Fetch satellite positions from CelesTrak TLE data, propagated via satellite.js (SGP4).
+ * Returns { satellites, count, timestamp, source }.
+ */
 export async function getGlobeSatellites() {
-  try { return await tryFetch(`${API_BASE}/globe/satellites`); }
-  catch { return demoGlobeSatellites(); } // Static reference satellites
+  // Try multiple CelesTrak groups until we get data
+  const groups = ['stations', 'visual', 'active'];
+  let allGPs = [];
+  for (const group of groups) {
+    try {
+      const url = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=json`;
+      const data = await directFetch(url);
+      if (Array.isArray(data) && data.length > 0) { allGPs = data; break; }
+    } catch { continue; }
+  }
+
+  if (allGPs.length === 0) {
+    // Fallback to backend
+    try {
+      const res = await tryFetch(`${API_BASE}/globe/satellites`);
+      return { satellites: Array.isArray(res) ? res : (res.satellites || []), count: (res.count || 0), source: 'backend' };
+    } catch {
+      return { satellites: [], count: 0, error: 'CelesTrak unreachable', source: 'none' };
+    }
+  }
+
+  // Propagate real positions using satellite.js SGP4
+  const now = new Date();
+  const gmst = satellite.gstime(now);
+  const results = [];
+  for (const gp of allGPs) {
+    try {
+      if (!gp.TLE_LINE1 || !gp.TLE_LINE2) continue;
+      const satrec = satellite.twoline2satrec(gp.TLE_LINE1, gp.TLE_LINE2);
+      const pv = satellite.propagate(satrec, now);
+      if (!pv.position || typeof pv.position === 'boolean') continue;
+      const geo = satellite.eciToGeodetic(pv.position, gmst);
+      const lat = satellite.degreesLat(geo.latitude);
+      const lng = satellite.degreesLong(geo.longitude);
+      const alt = geo.height; // km
+      const vel = pv.velocity ? Math.sqrt(pv.velocity.x ** 2 + pv.velocity.y ** 2 + pv.velocity.z ** 2) : 0;
+      results.push({
+        id: `sat-${gp.NORAD_CAT_ID}`, name: gp.OBJECT_NAME, noradId: gp.NORAD_CAT_ID,
+        type: _categorizeSat(gp.OBJECT_NAME), lat, lng, alt: Math.round(alt),
+        velocity: parseFloat(vel.toFixed(2)), inclination: gp.INCLINATION,
+        period_min: gp.PERIOD, epoch: gp.EPOCH,
+      });
+    } catch { /* skip bad TLE */ }
+  }
+  return { satellites: results, count: results.length, timestamp: Date.now(), source: 'CelesTrak SGP4' };
+}
+
+/**
+ * Fetch real-time vessel positions from Finnish Digitraffic AIS API.
+ * Free, CORS-enabled, no API key — covers Baltic Sea / Northern Europe.
+ * Returns { vessels, count, timestamp, source }.
+ */
+export async function getGlobeVessels() {
+  try {
+    const data = await directFetch('https://meri.digitraffic.fi/api/ais/v1/locations');
+    const features = data.features || [];
+    const vessels = features.slice(0, 500).map(f => {
+      const p = f.properties || {};
+      const [lng, lat] = f.geometry?.coordinates || [0, 0];
+      return {
+        id: `ais-${p.mmsi}`, mmsi: p.mmsi, name: `MMSI ${p.mmsi}`,
+        lat, lng, heading: p.heading ?? p.cog ?? 0, speed_knots: p.sog ?? 0,
+        nav_status: p.navStat ?? 0, timestamp: p.timestampExternal || '',
+        source: 'Digitraffic AIS',
+      };
+    });
+    return { vessels, count: vessels.length, timestamp: Date.now(), source: 'Digitraffic AIS (Baltic)' };
+  } catch {
+    try { return await tryFetch(`${API_BASE}/globe/vessels`); }
+    catch { return { vessels: [], count: 0, error: 'AIS data unreachable', source: 'none' }; }
+  }
 }
 
 export async function getGlobeConfig() {
@@ -1321,36 +1369,6 @@ function _parseOpenSkyStates(states) {
       vertical_rate: s[11] || 0,
       category: s.length > 17 ? s[17] : 0,
     }));
-}
-
-/**
- * Fetch live ADS-B flight positions — calls OpenSky Network directly.
- * Falls back to backend proxy if direct call fails (CORS / rate limit).
- */
-export async function getGlobeLiveFlights(bounds) {
-  const params = new URLSearchParams();
-  if (bounds) {
-    if (bounds.lamin != null) params.set('lamin', bounds.lamin);
-    if (bounds.lamax != null) params.set('lamax', bounds.lamax);
-    if (bounds.lomin != null) params.set('lomin', bounds.lomin);
-    if (bounds.lomax != null) params.set('lomax', bounds.lomax);
-  }
-  const qs = params.toString();
-
-  // 1. Try direct call to OpenSky (works from browser, free anonymous access)
-  try {
-    const url = `https://opensky-network.org/api/states/all${qs ? '?' + qs : ''}`;
-    const data = await directFetch(url);
-    const aircraft = _parseOpenSkyStates(data.states);
-    return { aircraft, count: aircraft.length, timestamp: Date.now(), source: 'opensky-direct' };
-  } catch { /* direct failed, try backend */ }
-
-  // 2. Try backend proxy
-  try {
-    return await tryFetch(`${API_BASE}/globe/live-flights${qs ? '?' + qs : ''}`);
-  } catch {
-    return { aircraft: [], count: 0, error: 'OpenSky unreachable', source: 'none' };
-  }
 }
 
 /**

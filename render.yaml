@@ -1,0 +1,15 @@
+# Render.com Blueprint — deploy backend API for free
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: hcmn-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: CORS_ORIGINS
+        value: "https://illmedicine.github.io,http://localhost:5173"
+    healthCheckPath: /api/health

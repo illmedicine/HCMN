@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     router_admin_password: str = ""
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://illmedicine.github.io",
+    ]
 
     model_config = {"env_file": ".env", "env_prefix": "HCMN_"}

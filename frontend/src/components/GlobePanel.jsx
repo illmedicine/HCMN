@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getGlobePOIs, getGlobeFlights, getGlobeSatellites, getGlobeConfig, setGlobeApiKey, sendChatMessage, getGlobeLiveFlights, getGlobeFAAFlights, getGlobeDOTFeed } from '../services/api';
+import { getGlobePOIs, getGlobeFlights, getGlobeSatellites, getGlobeConfig, setGlobeApiKey, sendChatMessage, getGlobeVessels, getGlobeFAAFlights, getGlobeDOTFeed } from '../services/api';
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -37,19 +37,28 @@ const REQUIRED_APIS_FALLBACK = [
 ];
 
 // ---------------------------------------------------------------------------
-// Load Google Maps via dynamic script tag — includes maps3d for 3D Globe
+// Load Google Maps — handles retries and key changes
 // ---------------------------------------------------------------------------
 let _gmapPromise = null;
+let _gmapKey = null;
 function loadGoogleMaps(apiKey) {
+  // Reset if key changed or previous load failed
+  if (_gmapKey && _gmapKey !== apiKey) {
+    _gmapPromise = null;
+    document.querySelectorAll('script[src*="maps.googleapis.com"]').forEach(s => s.remove());
+    delete window.google;
+    delete window.__gmapsReady;
+  }
+  _gmapKey = apiKey;
   if (_gmapPromise) return _gmapPromise;
   _gmapPromise = new Promise((resolve, reject) => {
-    if (window.google?.maps?.maps3d) { resolve(window.google.maps); return; }
+    if (window.google?.maps) { resolve(window.google.maps); return; }
     const script = document.createElement('script');
     script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=maps3d,marker&v=alpha&callback=__gmapsReady`;
     script.async = true;
     script.defer = true;
     window.__gmapsReady = () => { resolve(window.google.maps); delete window.__gmapsReady; };
-    script.onerror = () => reject(new Error('Failed to load Google Maps script'));
+    script.onerror = () => { _gmapPromise = null; reject(new Error('Failed to load Google Maps script — check API key')); };
     document.head.appendChild(script);
   });
   return _gmapPromise;
@@ -89,8 +98,8 @@ export default function GlobePanel() {
     flights: true,
     satellites: true,
     pois: true,
+    vessels: false,
     osm: false,
-    liveFlights: false,
     faaFlights: false,
     dotFeed: false,
   });
@@ -98,10 +107,12 @@ export default function GlobePanel() {
   const [pois, setPois] = useState([]);
   const [flights, setFlights] = useState([]);
   const [satellites, setSatellites] = useState([]);
-  const [liveAircraft, setLiveAircraft] = useState([]);
+  const [vessels, setVessels] = useState([]);
   const [faaAircraft, setFaaAircraft] = useState([]);
   const [dotEvents, setDotEvents] = useState([]);
-  const [liveFlightsStatus, setLiveFlightsStatus] = useState('');
+  const [flightsStatus, setFlightsStatus] = useState('');
+  const [satellitesStatus, setSatellitesStatus] = useState('');
+  const [vesselsStatus, setVesselsStatus] = useState('');
   const [faaFlightsStatus, setFaaFlightsStatus] = useState('');
   const [dotFeedStatus, setDotFeedStatus] = useState('');
   const [selectedEntity, setSelectedEntity] = useState(null);
@@ -111,27 +122,58 @@ export default function GlobePanel() {
   const [flyTarget, setFlyTarget] = useState('');
   const [isPopped, setIsPopped] = useState(false);
 
-  // ── Load data ──────────────────────────────────────────────────────────
+  // ── Load POIs (static reference data — loaded once) ─────────────────────
   useEffect(() => {
-    Promise.all([getGlobePOIs(), getGlobeFlights(), getGlobeSatellites()])
-      .then(([p, f, s]) => { setPois(p); setFlights(f); setSatellites(s); });
+    getGlobePOIs().then(p => setPois(p));
   }, []);
 
-  // ── Real-time polling: Live ADS-B Flights ─────────────────────────────
+  // ── Real-time polling: Global Flights (OpenSky ADS-B) ─────────────────
   useEffect(() => {
-    if (!layers.liveFlights) { setLiveAircraft([]); setLiveFlightsStatus(''); return; }
+    if (!layers.flights) { setFlights([]); setFlightsStatus(''); return; }
     let cancelled = false;
     async function poll() {
-      setLiveFlightsStatus('loading');
-      const res = await getGlobeLiveFlights();
+      setFlightsStatus('loading');
+      const res = await getGlobeFlights();
       if (cancelled) return;
-      setLiveAircraft(res.aircraft || []);
-      setLiveFlightsStatus(res.error ? `⚠ ${res.error}` : `${res.count || 0} aircraft · ${res.cached ? 'cached' : 'live'}`);
+      setFlights(res.aircraft || []);
+      setFlightsStatus(res.error ? `⚠ ${res.error}` : `${res.count || 0} aircraft · ${res.source || 'live'}`);
     }
     poll();
     const iv = setInterval(poll, 15000); // refresh every 15s
     return () => { cancelled = true; clearInterval(iv); };
-  }, [layers.liveFlights]);
+  }, [layers.flights]);
+
+  // ── Real-time polling: Satellites (CelesTrak SGP4) ────────────────────
+  useEffect(() => {
+    if (!layers.satellites) { setSatellites([]); setSatellitesStatus(''); return; }
+    let cancelled = false;
+    async function poll() {
+      setSatellitesStatus('loading');
+      const res = await getGlobeSatellites();
+      if (cancelled) return;
+      setSatellites(res.satellites || (Array.isArray(res) ? res : []));
+      setSatellitesStatus(res.error ? `⚠ ${res.error}` : `${res.count || 0} satellites · ${res.source || 'live'}`);
+    }
+    poll();
+    const iv = setInterval(poll, 60000); // refresh every 60s
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [layers.satellites]);
+
+  // ── Real-time polling: Vessels (Digitraffic AIS) ──────────────────────
+  useEffect(() => {
+    if (!layers.vessels) { setVessels([]); setVesselsStatus(''); return; }
+    let cancelled = false;
+    async function poll() {
+      setVesselsStatus('loading');
+      const res = await getGlobeVessels();
+      if (cancelled) return;
+      setVessels(res.vessels || []);
+      setVesselsStatus(res.error ? `⚠ ${res.error}` : `${res.count || 0} vessels · ${res.source || 'AIS'}`);
+    }
+    poll();
+    const iv = setInterval(poll, 30000); // refresh every 30s
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [layers.vessels]);
 
   // ── Real-time polling: FAA NAS Flights ────────────────────────────────
   useEffect(() => {
@@ -202,8 +244,14 @@ export default function GlobePanel() {
           map3d.style.cssText = 'width:100%;height:100%;display:block;';
           container.appendChild(map3d);
 
-          // Wait for the custom element to initialise
-          await customElements.whenDefined('gmp-map-3d');
+          // Wait for the custom element with a timeout
+          await Promise.race([
+            customElements.whenDefined('gmp-map-3d'),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(
+              'Map3DElement timed out. Enable the Map Tiles API in Google Cloud Console: ' +
+              'https://console.cloud.google.com/apis/library/tile.googleapis.com'
+            )), 12000)),
+          ]);
 
           map3dRef.current = map3d;
           is3dRef.current = true;
@@ -339,17 +387,13 @@ export default function GlobePanel() {
       });
     }
 
-    // -- Flights
+    // -- Flights (real-time ADS-B aircraft positions)
     if (layers.flights) {
-      flights.forEach(flt => {
-        const color = flt.type === 'military' ? LAYER_COLORS.military : LAYER_COLORS.commercial;
-        if (flt.waypoints?.length) {
-          addPolyline(flt.waypoints, color, 3);
-          const last = flt.waypoints[flt.waypoints.length - 1];
-          addMarker(last.lat, last.lng, flt.callsign, color,
-            flt.type === 'military' ? '✈️' : '🛫',
-            () => setSelectedEntity({ ...flt, entityType: 'flight' }));
-        }
+      flights.forEach(ac => {
+        const label = ac.callsign || ac.icao24 || '';
+        addMarker(ac.latitude, ac.longitude, `${label} · ${Math.round(ac.altitude_m || 0)}m`,
+          ac.on_ground ? '#888' : LAYER_COLORS.commercial, '✈️',
+          () => setSelectedEntity({ ...ac, entityType: 'liveAircraft', name: label }));
       });
     }
 
@@ -379,13 +423,12 @@ export default function GlobePanel() {
       mapEl.overlayMapTypes.push(osmLayer);
     }
 
-    // -- Live ADS-B Flights (real-time)
-    if (layers.liveFlights && liveAircraft.length) {
-      liveAircraft.forEach(ac => {
-        const label = ac.callsign || ac.icao24;
-        addMarker(ac.latitude, ac.longitude, `${label} · ${Math.round(ac.altitude_m)}m`,
-          LAYER_COLORS.liveFlights, '✈️',
-          () => setSelectedEntity({ ...ac, entityType: 'liveAircraft', name: label }));
+    // -- Vessels (AIS data)
+    if (layers.vessels && vessels.length) {
+      vessels.forEach(v => {
+        addMarker(v.lat, v.lng, `${v.name} · ${v.speed_knots?.toFixed(1) || 0}kn`,
+          '#00bcd4', '🚢',
+          () => setSelectedEntity({ ...v, entityType: 'vessel', name: v.name }));
       });
     }
 
@@ -409,7 +452,7 @@ export default function GlobePanel() {
           () => setSelectedEntity({ ...evt, entityType: 'dotEvent', name: evt.title }));
       });
     }
-  }, [mapReady, layers, pois, flights, satellites, liveAircraft, faaAircraft, dotEvents, viewMode, clearOverlays]);
+  }, [mapReady, layers, pois, flights, satellites, vessels, faaAircraft, dotEvents, viewMode, clearOverlays]);
 
   // ── Fly to location ────────────────────────────────────────────────────
   function flyTo(lat, lng, altitude = 1000) {
@@ -440,11 +483,10 @@ export default function GlobePanel() {
     // Check POIs
     const poi = pois.find(p => p.name.toLowerCase().includes(target));
     if (poi) { flyTo(poi.lat, poi.lng, 5000); return; }
-    // Check flights
-    const flt = flights.find(f => f.callsign.toLowerCase().includes(target));
-    if (flt?.waypoints?.length) {
-      const last = flt.waypoints[flt.waypoints.length - 1];
-      flyTo(last.lat, last.lng, last.alt || 10000);
+    // Check flights (real-time aircraft)
+    const flt = flights.find(f => (f.callsign || f.icao24 || '').toLowerCase().includes(target));
+    if (flt) {
+      flyTo(flt.latitude, flt.longitude, flt.altitude_m || 10000);
       return;
     }
     // Check satellites
@@ -554,9 +596,11 @@ export default function GlobePanel() {
             <h3>Layers</h3>
             {Object.entries(layers).map(([key, val]) => {
               const labelMap = {
+                flights: '✈️ Global Flights (ADS-B)',
+                satellites: '🛰️ Satellites (SGP4)',
                 pois: 'Points of Interest',
+                vessels: '🚢 Live Vessels (AIS)',
                 osm: 'OpenStreetMap Overlay',
-                liveFlights: '✈️ Live ADS-B Flights',
                 faaFlights: '🛩️ FAA NAS Flights (US)',
                 dotFeed: '🚧 DOT Traffic Feed',
               };
@@ -571,9 +615,11 @@ export default function GlobePanel() {
               );
             })}
             {/* Real-time status indicators */}
-            {(liveFlightsStatus || faaFlightsStatus || dotFeedStatus) && (
+            {(flightsStatus || satellitesStatus || vesselsStatus || faaFlightsStatus || dotFeedStatus) && (
               <div className="globe-realtime-status" style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#aaa' }}>
-                {layers.liveFlights && liveFlightsStatus && <div>ADS-B: {liveFlightsStatus}</div>}
+                {layers.flights && flightsStatus && <div>Flights: {flightsStatus}</div>}
+                {layers.satellites && satellitesStatus && <div>Satellites: {satellitesStatus}</div>}
+                {layers.vessels && vesselsStatus && <div>Vessels: {vesselsStatus}</div>}
                 {layers.faaFlights && faaFlightsStatus && <div>FAA: {faaFlightsStatus}</div>}
                 {layers.dotFeed && dotFeedStatus && <div>DOT: {dotFeedStatus}</div>}
               </div>
@@ -608,10 +654,10 @@ export default function GlobePanel() {
                 <span className="stat-val">{satellites.length}</span>
                 <span className="stat-lbl">Satellites</span>
               </div>
-              {layers.liveFlights && (
+              {layers.vessels && (
                 <div className="globe-stat">
-                  <span className="stat-val" style={{ color: LAYER_COLORS.liveFlights }}>{liveAircraft.length}</span>
-                  <span className="stat-lbl">Live ADS-B</span>
+                  <span className="stat-val" style={{ color: '#00bcd4' }}>{vessels.length}</span>
+                  <span className="stat-lbl">Vessels</span>
                 </div>
               )}
               {layers.faaFlights && (
@@ -719,27 +765,6 @@ export default function GlobePanel() {
               </div>
             )}
 
-            {selectedEntity.entityType === 'flight' && (
-              <div className="globe-detail-body">
-                <div className="property-list">
-                  <div className="property-row"><span className="prop-key">Callsign</span><span>{selectedEntity.callsign}</span></div>
-                  <div className="property-row"><span className="prop-key">Aircraft</span><span>{selectedEntity.aircraft}</span></div>
-                  <div className="property-row"><span className="prop-key">Type</span><span>{selectedEntity.type}</span></div>
-                  <div className="property-row"><span className="prop-key">Origin</span><span>{selectedEntity.origin}</span></div>
-                  <div className="property-row"><span className="prop-key">Destination</span><span>{selectedEntity.destination}</span></div>
-                  {selectedEntity.waypoints?.length > 0 && (() => {
-                    const last = selectedEntity.waypoints[selectedEntity.waypoints.length - 1];
-                    return (
-                      <>
-                        <div className="property-row"><span className="prop-key">Current Alt</span><span>{last.alt?.toLocaleString()} m</span></div>
-                        <div className="property-row"><span className="prop-key">Position</span><span>{last.lat?.toFixed(2)}°, {last.lng?.toFixed(2)}°</span></div>
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-
             {selectedEntity.entityType === 'satellite' && (
               <div className="globe-detail-body">
                 <div className="property-list">
@@ -783,6 +808,19 @@ export default function GlobePanel() {
                     <div className="property-row"><span className="prop-key">Position</span><span>{selectedEntity.latitude?.toFixed(4)}°, {selectedEntity.longitude?.toFixed(4)}°</span></div>
                   )}
                   {selectedEntity.timestamp && <div className="property-row"><span className="prop-key">Timestamp</span><span>{selectedEntity.timestamp}</span></div>}
+                </div>
+              </div>
+            )}
+
+            {selectedEntity.entityType === 'vessel' && (
+              <div className="globe-detail-body">
+                <div className="property-list">
+                  <div className="property-row"><span className="prop-key">MMSI</span><span>{selectedEntity.mmsi}</span></div>
+                  <div className="property-row"><span className="prop-key">Speed</span><span>{selectedEntity.speed_knots?.toFixed(1)} kn</span></div>
+                  <div className="property-row"><span className="prop-key">Heading</span><span>{selectedEntity.heading?.toFixed(0)}°</span></div>
+                  <div className="property-row"><span className="prop-key">Nav Status</span><span>{selectedEntity.nav_status}</span></div>
+                  <div className="property-row"><span className="prop-key">Position</span><span>{selectedEntity.lat?.toFixed(4)}°, {selectedEntity.lng?.toFixed(4)}°</span></div>
+                  <div className="property-row"><span className="prop-key">Source</span><span>{selectedEntity.source}</span></div>
                 </div>
               </div>
             )}
