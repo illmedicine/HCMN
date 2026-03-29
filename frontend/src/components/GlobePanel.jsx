@@ -298,13 +298,19 @@ export default function GlobePanel() {
       try {
         if (use3d) {
           // ── 3D Polyline ─────────────────────────────────────────
+          const coords = pathData.map(p => ({ lat: p.lat, lng: p.lng, altitude: (p.alt || 0) }));
           const poly = new google.maps.maps3d.Polyline3DElement({
-            coordinates: pathData.map(p => ({ lat: p.lat, lng: p.lng, altitude: (p.alt || 0) })),
             strokeColor: color,
             strokeWidth: weight * 2,
             altitudeMode: 'RELATIVE_TO_GROUND',
             drawsOccludedSegments: true,
           });
+          // Use 'path' (newer API) with 'coordinates' fallback
+          if ('path' in poly) {
+            poly.path = coords;
+          } else {
+            poly.coordinates = coords;
+          }
           mapEl.append(poly);
           polylinesRef.current.push(poly);
         } else {
@@ -358,12 +364,15 @@ export default function GlobePanel() {
 
     // -- OSM tile overlay (flat mode only — not supported on 3D globe)
     if (!use3d && layers.osm && mapEl.overlayMapTypes) {
+      const OSM_MAX_ZOOM = 19;
       const osmLayer = new google.maps.ImageMapType({
-        getTileUrl: (coord, zoom) =>
-          `https://tile.openstreetmap.org/${zoom}/${coord.x}/${coord.y}.png`,
+        getTileUrl: (coord, zoom) => {
+          const z = Math.min(zoom, OSM_MAX_ZOOM);
+          return `https://tile.openstreetmap.org/${z}/${coord.x}/${coord.y}.png`;
+        },
         tileSize: new google.maps.Size(256, 256),
         name: 'OSM',
-        maxZoom: 19,
+        maxZoom: OSM_MAX_ZOOM,
         opacity: 0.6,
       });
       mapEl.overlayMapTypes.clear();

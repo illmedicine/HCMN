@@ -3,7 +3,7 @@ import { fetchLiveAircraft, fetchTLEs, getCellTowers, searchCellByPhone, lookupC
 
 /* ---------- CesiumJS + resium ---------- */
 import * as Cesium from 'cesium';
-import 'cesium/Build/Cesium/Widgets/widgets.css';
+import('cesium/Build/Cesium/Widgets/widgets.css').catch(() => {});
 import { Viewer, Entity, PolylineGraphics, LabelGraphics, PointGraphics } from 'resium';
 
 /* ---------- satellite.js for TLE propagation ---------- */
