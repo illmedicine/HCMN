@@ -157,14 +157,33 @@ function demoAreaData(lat, lon, radiusKm, label) {
     latitude: around(lat, radiusKm / 80),
   }));
 
+  const radioTypes = ['LTE', '5G-NR', 'UMTS', 'GSM', 'CDMA'];
+  const operators = ['AT&T', 'T-Mobile', 'Verizon', 'Sprint', 'US Cellular'];
+  const cell_towers = Array.from({ length: n(5) + 3 }, (_, i) => ({
+    mcc: 310,
+    mnc: [410, 260, 480, 120, 330][i % 5],
+    lac: 30000 + i,
+    cell_id: 10000 + Math.floor(Math.random() * 90000),
+    latitude: around(lat, radiusKm / 100),
+    longitude: around(lon, radiusKm / 100),
+    range_m: Math.round(rnd(500, 4000)),
+    radio: radioTypes[i % radioTypes.length],
+    operator: operators[i % operators.length],
+    source: ['opencellid', 'wigle', 'beacondb'][i % 3],
+    signal_strength: -Math.round(rnd(50, 100)),
+    samples: Math.floor(rnd(50, 3000)),
+    last_seen: Date.now() / 1000 - Math.floor(rnd(60, 7200)),
+  }));
+
   const nearby_cameras = demoFeeds().slice(0, 4).map(f => ({ ...f }));
 
   return {
-    summary: `Area intelligence for ${label || `${lat.toFixed(2)}, ${lon.toFixed(2)}`} (${radiusKm} km radius): ${aircraft.length} aircraft tracked, ${vessels.length} vessels detected, ${satellites.length} satellites in view, ${crime_reports.length} crime reports.`,
+    summary: `Area intelligence for ${label || `${lat.toFixed(2)}, ${lon.toFixed(2)}`} (${radiusKm} km radius): ${aircraft.length} aircraft tracked, ${vessels.length} vessels detected, ${satellites.length} satellites in view, ${crime_reports.length} crime reports, ${cell_towers.length} cell towers.`,
     aircraft,
     vessels,
     satellites,
     crime_reports,
+    cell_towers,
     nearby_cameras,
   };
 }
@@ -331,7 +350,11 @@ function demoChatReply(messages) {
     return { reply: 'Wi-Fi CSI (Channel State Information) analyzes how wireless signals reflect off objects and people in a room. By measuring amplitude and phase changes across OFDM subcarriers, the system can detect presence, count occupants, and classify activity (walking, sitting, standing) without cameras.' };
   if (last.includes('vessel') || last.includes('ship') || last.includes('boat'))
     return { reply: 'Vessel tracking uses AIS (Automatic Identification System) data showing cargo ships, tankers, passenger vessels, and fishing boats. Each vessel reports its MMSI, position, heading, speed, and destination port.' };
-  return { reply: `HCMN is a mesh network intelligence platform with three modules:\n\n1. **Video Deck** — 12 public camera feeds (DOT traffic, EarthCam, weather)\n2. **Tracking** — Aircraft (ADS-B), vessels (AIS), satellites (ISS/Starlink), crime reports\n3. **Wi-Fi CSI** — Room presence detection via wireless signal analysis\n\nAsk me about any specific module or data source for more details.` };
+  if (last.includes('cell') || last.includes('tower') || last.includes('phone') || last.includes('imsi'))
+    return { reply: 'Cell tower tracking uses data from OpenCelliD, beaconDB, and WiGLE to locate cell towers by MCC/MNC/LAC/CID. You can search for cell IDs associated with a phone number, cross-reference tower pings to track device movement, and visualize tower positions on the map. Each tower shows its radio type (LTE/5G-NR/UMTS/GSM), operator, signal strength, and coverage range.' };
+  if (last.includes('cdr') || last.includes('call detail') || last.includes('call record') || last.includes('imei') || last.includes('contact graph'))
+    return { reply: 'CDR (Call Detail Record) analysis provides:\n\n• **CDR Upload** — Parse CSV files with call/SMS records or tower dumps\n• **Contact Graph** — BFS-style expansion from a target number showing who called whom, frequency, and duration (gigaTrace-inspired)\n• **IMEI Tracking** — Track devices across SIM swaps and detect burner phones\n• **Location Profiling** — Detect home/work locations from tower usage patterns, reconstruct routes (Cellyzer-inspired)\n• **Gotham Export** — Push CDR graphs into the knowledge graph for link analysis\n\nUpload a CDR CSV or use the demo data to explore.' };
+  return { reply: `HCMN is a mesh network intelligence platform with four modules:\n\n1. **Video Deck** — 12 public camera feeds (DOT traffic, EarthCam, weather)\n2. **Tracking** — Aircraft (ADS-B), vessels (AIS), satellites (ISS/Starlink), crime reports, cell towers (OpenCelliD/beaconDB/WiGLE)\n3. **CDR Analysis** — Call Detail Record parsing, contact graphs, IMEI tracking, location profiling (gigaTrace + Cellyzer inspired)\n4. **Wi-Fi CSI** — Room presence detection via wireless signal analysis\n\nAsk me about any specific module or data source for more details.` };
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +469,228 @@ export async function listPins() {
   } catch {
     return [];
   }
+}
+
+export async function getCellTowers(lat, lon, radiusKm = 10) {
+  try {
+    const params = new URLSearchParams({ lat, lon, radius_km: radiusKm });
+    return await tryFetch(`${API_BASE}/tracking/celltowers?${params}`);
+  } catch {
+    return demoAreaData(lat, lon, radiusKm, '').cell_towers;
+  }
+}
+
+export async function lookupCellTower(mcc, mnc, lac, cellId) {
+  try {
+    const params = new URLSearchParams({ mcc, mnc, lac, cell_id: cellId });
+    return await tryFetch(`${API_BASE}/tracking/celltower/lookup?${params}`);
+  } catch {
+    return null;
+  }
+}
+
+export async function searchCellByPhone(phoneNumber) {
+  try {
+    const params = new URLSearchParams({ phone_number: phoneNumber });
+    return await tryFetch(`${API_BASE}/tracking/celltower/search?${params}`, {
+      method: 'POST',
+    });
+  } catch {
+    // Return demo cross-reference data
+    return demoCellHistory(phoneNumber);
+  }
+}
+
+export async function crossReferenceCells(cellIds) {
+  try {
+    return await tryFetch(`${API_BASE}/tracking/celltower/crossref`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cellIds),
+    });
+  } catch {
+    return { device_id: 'xref-query', pings: [], towers_visited: [], summary: 'Cross-reference failed – using demo mode.' };
+  }
+}
+
+function demoCellHistory(phoneNumber) {
+  const now = Date.now() / 1000;
+  const suffix = phoneNumber.slice(-4) || '0000';
+  const towers = [
+    { mcc: 310, mnc: 410, lac: 30000, cell_id: 12345, latitude: 40.7128 + 0.008, longitude: -74.006 - 0.005, range_m: 1500, radio: 'LTE', operator: 'AT&T', source: 'demo' },
+    { mcc: 310, mnc: 260, lac: 30001, cell_id: 23456, latitude: 40.7128 - 0.004, longitude: -74.006 + 0.007, range_m: 2200, radio: 'LTE', operator: 'T-Mobile', source: 'demo' },
+    { mcc: 311, mnc: 480, lac: 30002, cell_id: 34567, latitude: 40.7128 + 0.012, longitude: -74.006 + 0.009, range_m: 3000, radio: '5G-NR', operator: 'Verizon', source: 'demo' },
+    { mcc: 310, mnc: 410, lac: 30003, cell_id: 45678, latitude: 40.7128 - 0.006, longitude: -74.006 - 0.003, range_m: 1800, radio: 'UMTS', operator: 'AT&T', source: 'demo' },
+  ];
+  const pings = towers.map((t, i) => ({
+    cell_tower: t,
+    timestamp: now - (towers.length - i) * 3600,
+    signal_dbm: -60 - i * 5,
+    device_id: `dev-${suffix}`,
+    phone_number: phoneNumber,
+  }));
+  return {
+    device_id: `dev-${suffix}`,
+    phone_number: phoneNumber,
+    pings,
+    towers_visited: towers,
+    first_seen: pings[0]?.timestamp || 0,
+    last_seen: pings[pings.length - 1]?.timestamp || 0,
+    summary: `Device associated with ${phoneNumber} observed on ${towers.length} cell towers across ${pings.length} ping events.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// CDR (Call Detail Record) Analysis – gigaTrace & Cellyzer inspired
+// ---------------------------------------------------------------------------
+
+export async function uploadCDR(file) {
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    return await tryFetch(`${API_BASE}/cdr/upload`, { method: 'POST', body: form });
+  } catch {
+    return demoCDRUpload();
+  }
+}
+
+export async function uploadTowerDump(file) {
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    return await tryFetch(`${API_BASE}/cdr/upload/towerdump`, { method: 'POST', body: form });
+  } catch {
+    return demoCDRUpload();
+  }
+}
+
+export async function getCDRRecords(phone = '') {
+  try {
+    const params = phone ? new URLSearchParams({ phone }) : '';
+    return await tryFetch(`${API_BASE}/cdr/records${params ? '?' + params : ''}`);
+  } catch {
+    return [];
+  }
+}
+
+export async function clearCDRRecords() {
+  try {
+    await tryFetch(`${API_BASE}/cdr/records`, { method: 'DELETE' });
+  } catch { /* noop */ }
+}
+
+export async function getContactGraph(target = '', depth = 1) {
+  try {
+    const params = new URLSearchParams({ depth });
+    if (target) params.set('target', target);
+    return await tryFetch(`${API_BASE}/cdr/graph?${params}`);
+  } catch {
+    return demoContactGraph(target);
+  }
+}
+
+export async function trackIMEI(imei) {
+  try {
+    return await tryFetch(`${API_BASE}/cdr/imei/${encodeURIComponent(imei)}`);
+  } catch {
+    return demoIMEIDevice(imei);
+  }
+}
+
+export async function getLocationProfile(phoneNumber) {
+  try {
+    return await tryFetch(`${API_BASE}/cdr/profile/${encodeURIComponent(phoneNumber)}`);
+  } catch {
+    return demoLocationProfile(phoneNumber);
+  }
+}
+
+export async function exportCDRToGotham(target = '', depth = 1) {
+  try {
+    const params = new URLSearchParams({ depth });
+    if (target) params.set('target', target);
+    return await tryFetch(`${API_BASE}/cdr/export/gotham?${params}`, { method: 'POST' });
+  } catch {
+    return { objects_count: 0, links_count: 0, message: 'Export failed – demo mode.' };
+  }
+}
+
+function demoCDRUpload() {
+  return {
+    total_records: 14, unique_numbers: 8, unique_imeis: 5, unique_towers: 7,
+    date_range_start: Date.now() / 1000 - 3 * 86400,
+    date_range_end: Date.now() / 1000,
+    summary: 'Demo: Parsed 14 CDR records: 8 unique numbers, 5 IMEIs, 7 cell towers.',
+  };
+}
+
+function demoContactGraph(target) {
+  const nodes = [
+    { phone_number: '+1-555-0101', call_count: 5, total_duration_sec: 1020, sms_count: 1, imei: '352099001761481', label: '+1-555-0101' },
+    { phone_number: '+1-555-0202', call_count: 3, total_duration_sec: 900, sms_count: 0, imei: '356938035643809', label: '+1-555-0202' },
+    { phone_number: '+1-555-0303', call_count: 4, total_duration_sec: 1470, sms_count: 1, imei: '490154203237518', label: '+1-555-0303' },
+    { phone_number: '+1-555-0505', call_count: 5, total_duration_sec: 1800, sms_count: 1, imei: '000000000000000', label: '+1-555-0505 ⚠' },
+    { phone_number: '+1-555-0707', call_count: 2, total_duration_sec: 900, sms_count: 1, imei: '356938035643809', label: '+1-555-0707' },
+    { phone_number: '+1-555-0808', call_count: 2, total_duration_sec: 600, sms_count: 0, imei: '861536030196001', label: '+1-555-0808' },
+  ];
+  const edges = [
+    { source: '+1-555-0101', target: '+1-555-0202', call_count: 3, total_duration_sec: 900, weight: 1.0 },
+    { source: '+1-555-0101', target: '+1-555-0303', call_count: 1, total_duration_sec: 90, weight: 0.33 },
+    { source: '+1-555-0101', target: '+1-555-0505', call_count: 0, sms_count: 1, weight: 0.1 },
+    { source: '+1-555-0303', target: '+1-555-0505', call_count: 2, total_duration_sec: 840, weight: 0.67 },
+    { source: '+1-555-0303', target: '+1-555-0707', call_count: 1, sms_count: 1, weight: 0.33 },
+    { source: '+1-555-0505', target: '+1-555-0707', call_count: 1, total_duration_sec: 360, weight: 0.33 },
+    { source: '+1-555-0505', target: '+1-555-0808', call_count: 2, total_duration_sec: 600, weight: 0.67 },
+  ];
+  return {
+    nodes: target ? nodes.filter(n => edges.some(e => e.source === n.phone_number || e.target === n.phone_number) || n.phone_number === target) : nodes,
+    edges,
+    total_calls: 10, total_sms: 3,
+    communities: [['+1-555-0101', '+1-555-0202', '+1-555-0303', '+1-555-0505', '+1-555-0707', '+1-555-0808']],
+  };
+}
+
+function demoIMEIDevice(imei) {
+  const isBurner = imei === '000000000000000';
+  return {
+    imei,
+    imsi: isBurner ? '310260000111222' : '310410123456789',
+    phone_numbers: isBurner ? ['+1-555-0505'] : ['+1-555-0101'],
+    first_seen: Date.now() / 1000 - 3 * 86400,
+    last_seen: Date.now() / 1000 - 3600,
+    tower_history: [
+      { mcc: 310, mnc: 410, lac: 30000, cell_id: 12345, radio: 'LTE', source: 'cdr' },
+      { mcc: 310, mnc: 260, lac: 30001, cell_id: 23456, radio: 'LTE', source: 'cdr' },
+    ],
+    pings: [],
+    is_shared: isBurner,
+    summary: isBurner
+      ? `IMEI ${imei}: 1 SIM(s) (+1-555-0505). ⚠ Null IMEI — likely burner device.`
+      : `IMEI ${imei}: 1 SIM(s) (+1-555-0101), 2 tower pings.`,
+  };
+}
+
+function demoLocationProfile(phoneNumber) {
+  return {
+    phone_number: phoneNumber,
+    home_location: { latitude: 40.7128, longitude: -74.006, label: 'Home (tower 12345)' },
+    work_location: { latitude: 40.7580, longitude: -73.9855, label: 'Work (tower 23456)' },
+    frequent_locations: [
+      { latitude: 40.7128, longitude: -74.006, label: 'Tower 12345' },
+      { latitude: 40.7580, longitude: -73.9855, label: 'Tower 23456' },
+      { latitude: 40.6892, longitude: -74.0445, label: 'Tower 34567' },
+    ],
+    route_points: [
+      { latitude: 40.7128, longitude: -74.006, label: 'Tower 12345' },
+      { latitude: 40.7580, longitude: -73.9855, label: 'Tower 23456' },
+      { latitude: 40.6892, longitude: -74.0445, label: 'Tower 34567' },
+      { latitude: 40.7614, longitude: -73.9776, label: 'Tower 45678' },
+    ],
+    tower_distances_km: [5.12, 7.84, 8.91],
+    total_distance_km: 21.87,
+    active_hours: [8, 9, 10, 14, 15, 22],
+    summary: `Profile for ${phoneNumber}: Home detected, Work detected, 4 route points, 21.9 km total movement.`,
+  };
 }
 
 // ---------------------------------------------------------------------------
