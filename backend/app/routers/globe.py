@@ -443,3 +443,105 @@ def _safe_float(val: Any) -> float | None:
         return float(val)
     except (ValueError, TypeError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# REAL-TIME DATA: adsb.fi — community-driven ADS-B (geospatial queries)
+# ---------------------------------------------------------------------------
+
+_adsb_fi_cache: dict[str, Any] = {"data": [], "ts": 0, "key": ""}
+ADSB_FI_TTL = 5  # seconds — adsb.fi rate limit is ~1 req/sec
+
+
+@router.get("/adsb-fi")
+async def get_adsb_fi_flights(
+    lat: float = Query(42.8864, ge=-90, le=90, description="Center latitude"),
+    lon: float = Query(-78.8784, ge=-180, le=180, description="Center longitude"),
+    dist: int = Query(25, ge=1, le=250, description="Radius in nautical miles"),
+) -> dict:
+    """Proxy live ADS-B data from adsb.fi (community open-data API).
+
+    Avoids CORS issues and enforces server-side rate limiting.
+    Results are cached for 5 seconds.
+    """
+    now = time.time()
+    cache_key = f"{lat},{lon},{dist}"
+
+    if (
+        _adsb_fi_cache["data"]
+        and now - _adsb_fi_cache["ts"] < ADSB_FI_TTL
+        and _adsb_fi_cache.get("key") == cache_key
+    ):
+        return {
+            "aircraft": _adsb_fi_cache["data"],
+            "count": len(_adsb_fi_cache["data"]),
+            "timestamp": int(_adsb_fi_cache["ts"] * 1000),
+            "cached": True,
+            "source": "adsb.fi",
+        }
+
+    base_url = _settings.adsb_api_base_url if _settings else "https://opendata.adsb.fi/api/v3"
+    url = f"{base_url}/lat/{lat}/lon/{lon}/dist/{dist}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+
+        raw = data.get("ac") or data.get("aircraft") or []
+        # Normalize to a consistent format
+        aircraft = []
+        for ac in raw:
+            ac_lat = ac.get("lat")
+            ac_lon = ac.get("lon")
+            if ac_lat is None or ac_lon is None:
+                continue
+            alt_ft = ac.get("alt_geom") or ac.get("alt_baro") or 0
+            alt_m = alt_ft * 0.3048 if isinstance(alt_ft, (int, float)) else 0
+            aircraft.append({
+                "hex": (ac.get("hex") or "").strip(),
+                "callsign": (ac.get("flight") or "").strip(),
+                "registration": (ac.get("r") or "").strip(),
+                "icao_type": (ac.get("t") or "").strip(),
+                "latitude": ac_lat,
+                "longitude": ac_lon,
+                "altitude_m": alt_m,
+                "altitude_ft": alt_ft,
+                "heading": ac.get("track") or 0,
+                "ground_speed_kts": ac.get("gs") or 0,
+                "vertical_rate_fpm": ac.get("baro_rate") or 0,
+                "on_ground": ac.get("alt_baro") == "ground",
+                "squawk": ac.get("squawk") or "",
+                "source": "adsb.fi",
+            })
+
+        _adsb_fi_cache["data"] = aircraft
+        _adsb_fi_cache["ts"] = now
+        _adsb_fi_cache["key"] = cache_key
+
+        return {
+            "aircraft": aircraft,
+            "count": len(aircraft),
+            "timestamp": int(now * 1000),
+            "cached": False,
+            "source": "adsb.fi",
+        }
+    except Exception as exc:
+        logger.warning("adsb.fi fetch failed: %s", exc)
+        if _adsb_fi_cache["data"]:
+            return {
+                "aircraft": _adsb_fi_cache["data"],
+                "count": len(_adsb_fi_cache["data"]),
+                "timestamp": int(_adsb_fi_cache["ts"] * 1000),
+                "cached": True,
+                "source": "adsb.fi",
+                "error": str(exc),
+            }
+        return {
+            "aircraft": [],
+            "count": 0,
+            "timestamp": int(now * 1000),
+            "error": str(exc),
+            "source": "adsb.fi",
+        }

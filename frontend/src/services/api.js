@@ -1470,3 +1470,154 @@ export async function getGlobeDOTFeed() {
     sources: [...new Set(events.map(e => e.source))],
   };
 }
+
+// ---------------------------------------------------------------------------
+// ADS-B.fi — community-driven crowdsourced ADS-B (geospatial queries)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch live aircraft from adsb.fi for a geospatial area.
+ * Tries the backend proxy first (avoids CORS), falls back to direct.
+ * @param {number} lat - Center latitude.
+ * @param {number} lon - Center longitude.
+ * @param {number} radiusNm - Search radius in nautical miles.
+ */
+export async function fetchAdsbFiAircraft(lat = 42.8864, lon = -78.8784, radiusNm = 25) {
+  // Try backend proxy first
+  try {
+    const data = await tryFetch(
+      `${API_BASE}/globe/adsb-fi?lat=${lat}&lon=${lon}&dist=${radiusNm}`
+    );
+    return data;
+  } catch {
+    // Fall back to direct API call (may hit CORS on some browsers)
+    try {
+      const url = `https://opendata.adsb.fi/api/v3/lat/${lat}/lon/${lon}/dist/${radiusNm}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`adsb.fi ${res.status}`);
+      const data = await res.json();
+      const raw = data.ac || data.aircraft || [];
+      const aircraft = raw
+        .filter(ac => ac.lat != null && ac.lon != null)
+        .map(ac => {
+          const altFt = ac.alt_geom ?? ac.alt_baro ?? 0;
+          return {
+            hex: (ac.hex || '').trim(),
+            callsign: (ac.flight || '').trim(),
+            registration: (ac.r || '').trim(),
+            latitude: ac.lat,
+            longitude: ac.lon,
+            altitude_m: typeof altFt === 'number' ? altFt * 0.3048 : 0,
+            heading: ac.track ?? 0,
+            ground_speed_kts: ac.gs ?? 0,
+            on_ground: ac.alt_baro === 'ground',
+            source: 'adsb.fi',
+          };
+        });
+      return { aircraft, count: aircraft.length, source: 'adsb.fi' };
+    } catch {
+      return { aircraft: [], count: 0, error: 'adsb.fi unreachable', source: 'adsb.fi' };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Historical Telemetry API (ArangoDB backend)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch telemetry points for an entity within a time window.
+ * @param {string} entityId - ICAO hex or entity key.
+ * @param {number} startTime - Unix epoch seconds.
+ * @param {number} endTime - Unix epoch seconds.
+ */
+export async function fetchHistoricalTelemetry(entityId, startTime, endTime) {
+  try {
+    const params = new URLSearchParams({
+      entity_id: entityId,
+      start_time: String(startTime),
+      end_time: String(endTime),
+    });
+    return await tryFetch(`${API_BASE}/history/telemetry?${params}`);
+  } catch {
+    return { points: [], count: 0, error: 'History service unavailable' };
+  }
+}
+
+/**
+ * Interpolate an entity's position at a specific timestamp.
+ * @param {string} entityId
+ * @param {number} ts - Unix epoch seconds.
+ */
+export async function interpolatePosition(entityId, ts) {
+  try {
+    const params = new URLSearchParams({
+      entity_id: entityId,
+      ts: String(ts),
+    });
+    return await tryFetch(`${API_BASE}/history/interpolate?${params}`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get the list of known historical entities.
+ * @param {string} entityType
+ */
+export async function fetchHistoryEntities(entityType = 'aircraft') {
+  try {
+    return await tryFetch(
+      `${API_BASE}/history/entities?entity_type=${encodeURIComponent(entityType)}`
+    );
+  } catch {
+    return { entities: [], count: 0 };
+  }
+}
+
+/**
+ * Trigger an ADS-B ingest cycle on the backend.
+ * @param {number} lat
+ * @param {number} lon
+ * @param {number} radiusNm
+ */
+export async function triggerAdsbIngest(lat = 42.8864, lon = -78.8784, radiusNm = 25) {
+  try {
+    return await tryFetch(
+      `${API_BASE}/history/ingest/adsb?lat=${lat}&lon=${lon}&radius_nm=${radiusNm}`,
+      { method: 'POST' }
+    );
+  } catch {
+    return { ingested: 0, error: 'Ingest service unavailable' };
+  }
+}
+
+/**
+ * Get history subsystem status.
+ */
+export async function getHistoryStatus() {
+  try {
+    return await tryFetch(`${API_BASE}/history/status`);
+  } catch {
+    return { arango_available: false, s3_available: false };
+  }
+}
+
+/**
+ * Fetch camera frame events within a time window.
+ * @param {string} cameraId
+ * @param {number} startTime
+ * @param {number} endTime
+ */
+export async function fetchCameraEvents(cameraId, startTime, endTime) {
+  try {
+    const params = new URLSearchParams({
+      camera_id: cameraId,
+      start_time: String(startTime),
+      end_time: String(endTime),
+    });
+    return await tryFetch(`${API_BASE}/history/camera-events?${params}`);
+  } catch {
+    return { events: [], count: 0, error: 'Camera events unavailable' };
+  }
+}

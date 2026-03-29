@@ -66,6 +66,26 @@ class Settings(BaseSettings):
     router_admin_user: str = "admin"
     router_admin_password: str = ""
 
+    # ADS-B Telemetry (adsb.fi)
+    adsb_api_base_url: str = "https://opendata.adsb.fi/api/v3"
+    adsb_poll_interval_ms: int = 5000
+    adsb_search_radius_nm: int = 25
+
+    # Historical Replay Backend (ArangoDB)
+    arango_url: str = "http://localhost:8529"
+    arango_db_name: str = "hcmn_ontology"
+    arango_user: str = "root"
+    arango_pass: str = ""
+
+    # Object Storage for Camera Frames (S3-compatible)
+    s3_bucket: str = "hcmn-historical-frames"
+    s3_region: str = "us-east-1"
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+
+    # Time-Series Configuration
+    data_retention_days: int = 30
+
     # CORS
     cors_origins: list[str] = [
         "http://localhost:3000",
