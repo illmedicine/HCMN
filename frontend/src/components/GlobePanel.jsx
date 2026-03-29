@@ -137,23 +137,18 @@ export default function GlobePanel() {
           map3dRef.current = el;
           is3dRef.current = true;
 
-          // Wait for element to be connected & check for rendering
-          customElements.whenDefined('gmp-map-3d').then(() => {
-            // After element upgrades, check for tile errors after 15s
-            setTimeout(() => {
-              if (map3dRef.current !== el) return;
-              // Check if the element rendered a canvas (tiles loaded)
-              const canvas = el.shadowRoot?.querySelector('canvas');
-              if (!canvas) {
-                setMapError(
-                  '3D tiles did not load. Please verify: '
-                  + '(1) Map Tiles API is enabled at console.cloud.google.com/apis/library/tile.googleapis.com  '
-                  + '(2) Billing is enabled on your Google Cloud project  '
-                  + '(3) Your API key allows this domain (illmedicine.github.io)'
-                );
-              }
-            }, 15000);
-          });
+          // Listen for actual API errors (bad key, tiles API disabled, etc.)
+          window.gm_authFailure = () => {
+            setMapError(
+              'Google Maps authentication failed. Please verify: '
+              + '(1) Your API key is valid  '
+              + '(2) Maps JavaScript API & Map Tiles API are enabled  '
+              + '(3) Billing is enabled  '
+              + '(4) Your API key allows this domain — go to '
+              + 'console.cloud.google.com/apis/credentials, click your key, '
+              + 'and add "illmedicine.github.io/*" to HTTP referrer restrictions'
+            );
+          };
 
           setMapReady(true);
         } else {
