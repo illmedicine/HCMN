@@ -122,16 +122,39 @@ export default function GlobePanel() {
         maps3dLibRef.current = maps3dLib;
 
         if (viewMode === '3d' && maps3dLib?.Map3DElement) {
-          // Append Map3DElement directly (CSS handles sizing via absolute positioning)
-          const el = new maps3dLib.Map3DElement({
-            center: { lat: 20, lng: 0, altitude: 15000000 },
-            range: 25000000,
-            tilt: 0,
-            heading: 0,
-          });
+          // Create Map3DElement and append to DOM first
+          const el = new maps3dLib.Map3DElement();
+          el.style.display = 'block';
+          el.style.width = '100%';
+          el.style.height = '100%';
+          el.style.minHeight = '400px';
           mapRef.current.appendChild(el);
+
+          // Set properties AFTER insertion so the element has layout context
+          el.center = { lat: 0, lng: 0, altitude: 0 };
+          el.range = 25000000;
+          el.tilt = 0;
+          el.heading = 0;
+
           map3dRef.current = el;
           is3dRef.current = true;
+
+          // Detect tile loading failure (e.g. Map Tiles API not enabled)
+          let tileLoaded = false;
+          const onCameraChange = () => { tileLoaded = true; };
+          el.addEventListener('gmp-centerchange', onCameraChange);
+          setTimeout(() => {
+            el.removeEventListener('gmp-centerchange', onCameraChange);
+            if (!tileLoaded && map3dRef.current === el) {
+              setMapError(
+                '3D tiles failed to load. Please verify: (1) Map Tiles API is enabled at '
+                + 'console.cloud.google.com/apis/library/tile.googleapis.com '
+                + '(2) Billing is enabled on your Google Cloud project '
+                + '(3) Your API key has no HTTP referrer restrictions blocking this site.'
+              );
+            }
+          }, 12000);
+
           setMapReady(true);
         } else {
           // Flat map needs a real div child
@@ -181,6 +204,7 @@ export default function GlobePanel() {
           const m = new google.maps.maps3d.Marker3DElement({
             position: { lat, lng, altitude: 0 },
           });
+          try { m.autofitsCamera = false; } catch (_) {}
           map.appendChild(m);
           markersRef.current.push(m);
           if (onClick) m.addEventListener('gmp-click', onClick);
@@ -218,6 +242,7 @@ export default function GlobePanel() {
             strokeWidth: weight,
             altitudeMode: 'ABSOLUTE',
           });
+          try { poly.autofitsCamera = false; } catch (_) {}
           // Use 'path' property (not deprecated 'coordinates')
           poly.path = coords;
           map.appendChild(poly);
