@@ -4,6 +4,7 @@ import TrackingPanel from './components/TrackingPanel';
 import SpectrumPanel from './components/SpectrumPanel';
 import CSIPanel from './components/CSIPanel';
 import GothamPanel from './components/GothamPanel';
+import GlobePanel from './components/GlobePanel';
 import './styles/dashboard.css';
 
 const MODULES = [
@@ -11,6 +12,7 @@ const MODULES = [
   { id: 'tracking', label: '🌍 Module 2 – Tracking', shortLabel: 'Tracking' },
   { id: 'csi', label: '📶 Module 3 – Wi-Fi CSI', shortLabel: 'CSI' },
   { id: 'gotham', label: '🔮 Module 4 – Gotham', shortLabel: 'Gotham' },
+  { id: 'globe', label: '🌐 Module 5 – 3D Globe', shortLabel: 'Globe' },
   { id: 'spectrum', label: '📡 RF Spectrum', shortLabel: 'Spectrum' },
 ];
 
@@ -52,6 +54,7 @@ export default function App() {
           {standaloneModule === 'tracking' && <TrackingPanel />}
           {standaloneModule === 'csi' && <CSIPanel />}
           {standaloneModule === 'gotham' && <GothamPanel />}
+          {standaloneModule === 'globe' && <GlobePanel />}
           {standaloneModule === 'spectrum' && <SpectrumPanel />}
         </main>
       </div>
@@ -97,6 +100,7 @@ export default function App() {
         {activeModule === 'tracking' && <TrackingPanel />}
         {activeModule === 'csi' && <CSIPanel />}
         {activeModule === 'gotham' && <GothamPanel />}
+        {activeModule === 'globe' && <GlobePanel />}
         {activeModule === 'spectrum' && <SpectrumPanel />}
       </main>
     </div>

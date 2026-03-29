@@ -1653,6 +1653,391 @@ body {
 .gotham-chat-card .chat-messages { flex: 1; max-height: 160px; overflow-y: auto; }
 
 /* ================================================================
+   GLOBE PANEL (Module 5 – Google Maps 3D)
+   ================================================================ */
+
+.globe-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 0;
+}
+
+.globe-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.globe-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.globe-toolbar-left h2 {
+  margin: 0;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.globe-view-toggle {
+  display: flex;
+  gap: 0.25rem;
+}
+.globe-view-toggle button {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.globe-view-toggle button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.globe-toolbar-center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.globe-fly-form {
+  display: flex;
+  gap: 0.25rem;
+  width: 100%;
+  max-width: 400px;
+}
+.globe-fly-form input {
+  flex: 1;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+.globe-fly-form button {
+  padding: 0.35rem 0.8rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.globe-toolbar-right .btn-popout {
+  padding: 0.3rem 0.6rem;
+  font-size: 1rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.globe-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.globe-sidebar {
+  width: 280px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.globe-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+.globe-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.06em;
+}
+
+.globe-hint {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  margin: 0 0 0.5rem;
+}
+.globe-hint a { color: var(--accent); }
+
+.globe-key-form {
+  display: flex;
+  gap: 0.3rem;
+}
+.globe-key-form input {
+  flex: 1;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+.globe-key-form button {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.globe-layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.globe-layer-toggle input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+.layer-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.globe-quick-fly {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.globe-quick-fly button {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.7rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.globe-quick-fly button:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.globe-stats {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-around;
+}
+.globe-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+}
+.globe-stat .stat-val {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+.globe-stat .stat-lbl {
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.globe-chat-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 160px;
+}
+.globe-chat-card .chat-messages {
+  flex: 1;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+/* Main map area */
+.globe-main {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.globe-map-container {
+  flex: 1;
+  min-height: 400px;
+}
+.globe-map-container gmp-map-3d {
+  width: 100%;
+  height: 100%;
+}
+
+.globe-error {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(200, 40, 40, 0.9);
+  color: #fff;
+  padding: 0.75rem 1.2rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  z-index: 10;
+  font-size: 0.85rem;
+}
+.globe-error button {
+  padding: 0.3rem 0.7rem;
+  background: rgba(255,255,255,0.2);
+  border: 1px solid rgba(255,255,255,0.4);
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.globe-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+.globe-placeholder-content {
+  text-align: center;
+  max-width: 480px;
+  padding: 2rem;
+}
+.globe-placeholder-icon {
+  font-size: 4rem;
+  margin-bottom: 1rem;
+}
+.globe-placeholder-content h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.4rem;
+}
+.globe-placeholder-content p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin: 0.25rem 0;
+}
+.globe-features-preview {
+  margin-top: 1.5rem;
+  text-align: left;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+}
+.globe-features-preview h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--accent);
+}
+.globe-features-preview ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+}
+
+/* Detail panel */
+.globe-detail-panel {
+  width: 300px;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.globe-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.globe-detail-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  word-break: break-word;
+}
+.globe-detail-header .btn-close {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 0.3rem;
+}
+
+.globe-detail-type {
+  margin-bottom: 0.5rem;
+}
+
+.globe-detail-body {
+  flex: 1;
+}
+
+.globe-detail-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+.globe-detail-actions button {
+  flex: 1;
+  min-width: 80px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.globe-detail-actions button:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ================================================================
    SPECTRUM PANEL (existing, kept)
    ================================================================ */
 
@@ -1795,6 +2180,12 @@ body {
   .gotham-sidebar .gotham-card { flex: 1; min-width: 250px; }
   .gotham-detail-panel { width: 100%; min-width: auto; max-height: none; }
   .gotham-view-tabs { flex-wrap: wrap; }
+  .globe-layout { flex-direction: column; }
+  .globe-sidebar { width: 100%; min-width: auto; max-height: none; flex-direction: row; flex-wrap: wrap; overflow-y: visible; border-right: none; border-bottom: 1px solid var(--border); }
+  .globe-sidebar .globe-card { flex: 1; min-width: 220px; }
+  .globe-detail-panel { width: 100%; min-width: auto; max-height: none; border-left: none; border-top: 1px solid var(--border); }
+  .globe-toolbar { flex-direction: column; align-items: stretch; }
+  .globe-fly-form { max-width: none; }
 }
 
 
