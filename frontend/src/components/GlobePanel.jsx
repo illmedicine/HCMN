@@ -92,47 +92,55 @@ export default function GlobePanel() {
       .then(([p, f, s]) => { setPois(p); setFlights(f); setSatellites(s); });
   }, []);
 
-  // ── Init Google Maps ───────────────────────────────────────────────────
+  // ── Init Google Maps (functional API v2) ────────────────────────────
   useEffect(() => {
     if (!activeKey || !mapRef.current) return;
 
     setMapError('');
-    const loader = new Loader({
-      apiKey: activeKey,
-      version: 'beta',
-      libraries: ['maps3d', 'marker', 'places'],
-    });
 
-    loader.load().then((google) => {
-      googleRef.current = google;
+    // setOptions can only be called once per page load
+    if (!gmpConfigured) {
+      gmpSetOptions({ key: activeKey, v: 'beta' });
+      gmpConfigured = true;
+    }
 
-      // Try 3D Map first, fall back to standard
-      if (viewMode === '3d' && google.maps.maps3d?.Map3DElement) {
-        const el = new google.maps.maps3d.Map3DElement({
-          center: { lat: 20, lng: 0, altitude: 15000000 },
-          range: 25000000,
-          tilt: 0,
-          heading: 0,
-        });
-        mapRef.current.innerHTML = '';
-        mapRef.current.appendChild(el);
-        map3dRef.current = el;
-        setMapReady(true);
-      } else {
-        const m = new google.maps.Map(mapRef.current, {
-          center: { lat: 20, lng: 0 },
-          zoom: 2,
-          mapTypeId: 'hybrid',
-          mapId: 'hcmn_globe',
-          gestureHandling: 'greedy',
-        });
-        map3dRef.current = m;
-        setMapReady(true);
+    (async () => {
+      try {
+        const [mapsLib, maps3dLib] = await Promise.all([
+          importLibrary('maps'),
+          importLibrary('maps3d').catch(() => null),
+        ]);
+        await importLibrary('marker');
+        const google = window.google;
+        googleRef.current = google;
+
+        if (viewMode === '3d' && maps3dLib?.Map3DElement) {
+          const el = new maps3dLib.Map3DElement({
+            center: { lat: 20, lng: 0, altitude: 15000000 },
+            range: 25000000,
+            tilt: 0,
+            heading: 0,
+          });
+          mapRef.current.innerHTML = '';
+          mapRef.current.appendChild(el);
+          map3dRef.current = el;
+          setMapReady(true);
+        } else {
+          const m = new mapsLib.Map(mapRef.current, {
+            center: { lat: 20, lng: 0 },
+            zoom: 2,
+            mapTypeId: 'hybrid',
+            mapId: 'hcmn_globe',
+            gestureHandling: 'greedy',
+          });
+          map3dRef.current = m;
+          setMapReady(true);
+        }
+      } catch (err) {
+        console.error('Google Maps load error:', err);
+        setMapError(err.message || 'Failed to load Google Maps');
       }
-    }).catch(err => {
-      console.error('Google Maps load error:', err);
-      setMapError(err.message || 'Failed to load Google Maps');
-    });
+    })();
   }, [activeKey, viewMode]);
 
   // ── Clear & redraw overlays ────────────────────────────────────────────
