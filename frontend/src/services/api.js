@@ -1243,3 +1243,49 @@ export async function setGlobeApiKey(apiKey) {
     });
   } catch { return { ok: false }; }
 }
+
+// ---------------------------------------------------------------------------
+// REAL-TIME LAYERS — Live Flights (OpenSky ADS-B) & DOT Feed & FAA Flights
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch live ADS-B flight positions via backend proxy (OpenSky Network).
+ * Optionally pass a bounding box { lamin, lamax, lomin, lomax }.
+ */
+export async function getGlobeLiveFlights(bounds) {
+  const params = new URLSearchParams();
+  if (bounds) {
+    if (bounds.lamin != null) params.set('lamin', bounds.lamin);
+    if (bounds.lamax != null) params.set('lamax', bounds.lamax);
+    if (bounds.lomin != null) params.set('lomin', bounds.lomin);
+    if (bounds.lomax != null) params.set('lomax', bounds.lomax);
+  }
+  const qs = params.toString();
+  try {
+    return await tryFetch(`${API_BASE}/globe/live-flights${qs ? '?' + qs : ''}`);
+  } catch {
+    return { aircraft: [], count: 0, error: 'Backend unreachable' };
+  }
+}
+
+/**
+ * Fetch FAA NAS (National Airspace System) flights — US-only ADS-B data.
+ */
+export async function getGlobeFAAFlights() {
+  try {
+    return await tryFetch(`${API_BASE}/globe/faa-flights`);
+  } catch {
+    return { aircraft: [], count: 0, error: 'Backend unreachable' };
+  }
+}
+
+/**
+ * Fetch real-time DOT traffic feed data (USDOT, NHTSA, BTS).
+ */
+export async function getGlobeDOTFeed() {
+  try {
+    return await tryFetch(`${API_BASE}/globe/dot-feed`);
+  } catch {
+    return { events: [], count: 0, error: 'Backend unreachable' };
+  }
+}

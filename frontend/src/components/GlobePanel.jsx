@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getGlobePOIs, getGlobeFlights, getGlobeSatellites, getGlobeConfig, setGlobeApiKey, sendChatMessage } from '../services/api';
+import { getGlobePOIs, getGlobeFlights, getGlobeSatellites, getGlobeConfig, setGlobeApiKey, sendChatMessage, getGlobeLiveFlights, getGlobeFAAFlights, getGlobeDOTFeed } from '../services/api';
 
 // ---------------------------------------------------------------------------
 // CONFIG
@@ -11,6 +11,9 @@ const LAYER_COLORS = {
   satellite: '#ffcc00',
   poi: '#00ff88',
   osm: '#ff8800',
+  liveFlights: '#00e5ff',
+  faaFlights: '#76ff03',
+  dotFeed: '#ff6d00',
 };
 
 const POI_TYPE_COLORS = {
@@ -34,15 +37,15 @@ const REQUIRED_APIS_FALLBACK = [
 ];
 
 // ---------------------------------------------------------------------------
-// Load Google Maps via dynamic script tag (most reliable method)
+// Load Google Maps via dynamic script tag — includes maps3d for 3D Globe
 // ---------------------------------------------------------------------------
 let _gmapPromise = null;
 function loadGoogleMaps(apiKey) {
   if (_gmapPromise) return _gmapPromise;
   _gmapPromise = new Promise((resolve, reject) => {
-    if (window.google?.maps?.Map) { resolve(window.google.maps); return; }
+    if (window.google?.maps?.maps3d) { resolve(window.google.maps); return; }
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=marker&v=weekly&callback=__gmapsReady`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=maps3d,marker&v=alpha&callback=__gmapsReady`;
     script.async = true;
     script.defer = true;
     window.__gmapsReady = () => { resolve(window.google.maps); delete window.__gmapsReady; };
@@ -87,11 +90,20 @@ export default function GlobePanel() {
     satellites: true,
     pois: true,
     osm: false,
+    liveFlights: false,
+    faaFlights: false,
+    dotFeed: false,
   });
 
   const [pois, setPois] = useState([]);
   const [flights, setFlights] = useState([]);
   const [satellites, setSatellites] = useState([]);
+  const [liveAircraft, setLiveAircraft] = useState([]);
+  const [faaAircraft, setFaaAircraft] = useState([]);
+  const [dotEvents, setDotEvents] = useState([]);
+  const [liveFlightsStatus, setLiveFlightsStatus] = useState('');
+  const [faaFlightsStatus, setFaaFlightsStatus] = useState('');
+  const [dotFeedStatus, setDotFeedStatus] = useState('');
   const [selectedEntity, setSelectedEntity] = useState(null);
   const [viewMode, setViewMode] = useState('3d'); // 3d | flat
   const [chatMessages, setChatMessages] = useState([]);
@@ -105,7 +117,55 @@ export default function GlobePanel() {
       .then(([p, f, s]) => { setPois(p); setFlights(f); setSatellites(s); });
   }, []);
 
-  // ── Init Google Maps (direct script tag, latest stable v=weekly) ──────
+  // ── Real-time polling: Live ADS-B Flights ─────────────────────────────
+  useEffect(() => {
+    if (!layers.liveFlights) { setLiveAircraft([]); setLiveFlightsStatus(''); return; }
+    let cancelled = false;
+    async function poll() {
+      setLiveFlightsStatus('loading');
+      const res = await getGlobeLiveFlights();
+      if (cancelled) return;
+      setLiveAircraft(res.aircraft || []);
+      setLiveFlightsStatus(res.error ? `⚠ ${res.error}` : `${res.count || 0} aircraft · ${res.cached ? 'cached' : 'live'}`);
+    }
+    poll();
+    const iv = setInterval(poll, 15000); // refresh every 15s
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [layers.liveFlights]);
+
+  // ── Real-time polling: FAA NAS Flights ────────────────────────────────
+  useEffect(() => {
+    if (!layers.faaFlights) { setFaaAircraft([]); setFaaFlightsStatus(''); return; }
+    let cancelled = false;
+    async function poll() {
+      setFaaFlightsStatus('loading');
+      const res = await getGlobeFAAFlights();
+      if (cancelled) return;
+      setFaaAircraft(res.aircraft || []);
+      setFaaFlightsStatus(res.error ? `⚠ ${res.error}` : `${res.count || 0} aircraft · US NAS`);
+    }
+    poll();
+    const iv = setInterval(poll, 15000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [layers.faaFlights]);
+
+  // ── Real-time polling: DOT Feed ───────────────────────────────────────
+  useEffect(() => {
+    if (!layers.dotFeed) { setDotEvents([]); setDotFeedStatus(''); return; }
+    let cancelled = false;
+    async function poll() {
+      setDotFeedStatus('loading');
+      const res = await getGlobeDOTFeed();
+      if (cancelled) return;
+      setDotEvents(res.events || []);
+      setDotFeedStatus(res.error ? `⚠ ${res.error}` : `${res.count || 0} events · ${(res.sources || []).join(', ')}`);
+    }
+    poll();
+    const iv = setInterval(poll, 120000); // refresh every 2 min
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [layers.dotFeed]);
+
+  // ── Init Google Maps ────────────────────────────────────────────────────
   useEffect(() => {
     if (!activeKey || !mapRef.current) return;
 
@@ -130,31 +190,44 @@ export default function GlobePanel() {
         container.style.cssText = 'width:100%;height:100%;min-height:400px;';
         mapRef.current.appendChild(container);
 
-        const mapOptions = {
-          center: { lat: 20, lng: 0 },
-          zoom: 2,
-          mapTypeId: 'hybrid',
-          gestureHandling: 'greedy',
-          renderingType: gmaps.RenderingType?.VECTOR,
-          mapId: 'HCMN_GLOBE',
-        };
-
-        // 3D mode: vector map with tilt & heading for 3D buildings
         if (viewMode === '3d') {
-          mapOptions.tilt = 45;
-          mapOptions.heading = 0;
-          mapOptions.tiltInteractionEnabled = true;
-          mapOptions.headingInteractionEnabled = true;
-          mapOptions.zoom = 3;
-          mapOptions.center = { lat: 30, lng: 0 };
+          // ── True 3D Google Earth globe using Map3DElement ──────────
+          const map3d = document.createElement('gmp-map-3d');
+          map3d.setAttribute('center', '30,0');
+          map3d.setAttribute('altitude', '0');
+          map3d.setAttribute('heading', '0');
+          map3d.setAttribute('tilt', '0');
+          map3d.setAttribute('range', '25000000'); // zoom out to see full globe
+          map3d.setAttribute('default-labels-disabled', '');
+          map3d.style.cssText = 'width:100%;height:100%;display:block;';
+          container.appendChild(map3d);
+
+          // Wait for the custom element to initialise
+          await customElements.whenDefined('gmp-map-3d');
+
+          map3dRef.current = map3d;
+          is3dRef.current = true;
+          setMapReady(true);
+
+          console.log('[GlobePanel] 3D Globe (Map3DElement) created');
+        } else {
+          // ── Flat 2D map ───────────────────────────────────────────
+          const mapOptions = {
+            center: { lat: 20, lng: 0 },
+            zoom: 2,
+            mapTypeId: 'hybrid',
+            gestureHandling: 'greedy',
+            renderingType: gmaps.RenderingType?.VECTOR,
+            mapId: 'HCMN_GLOBE',
+          };
+
+          const m = new gmaps.Map(container, mapOptions);
+          map3dRef.current = m;
+          is3dRef.current = false;
+          setMapReady(true);
+
+          console.log('[GlobePanel] Flat map created');
         }
-
-        const m = new gmaps.Map(container, mapOptions);
-        map3dRef.current = m;
-        is3dRef.current = (viewMode === '3d');
-        setMapReady(true);
-
-        console.log('[GlobePanel] Map created, mode:', viewMode, 'rendering:', mapOptions.renderingType);
       } catch (err) {
         console.error('Google Maps load error:', err);
         setMapError(err.message || 'Failed to load Google Maps');
@@ -164,8 +237,15 @@ export default function GlobePanel() {
 
   // ── Clear & redraw overlays ────────────────────────────────────────────
   const clearOverlays = useCallback(() => {
-    markersRef.current.forEach(m => { if (m.map) m.map = null; else if (m.setMap) m.setMap(null); });
-    polylinesRef.current.forEach(p => { if (p.setMap) p.setMap(null); });
+    markersRef.current.forEach(m => {
+      if (m.remove) m.remove();            // 3D elements (DOM nodes)
+      else if (m.map) m.map = null;        // AdvancedMarkerElement
+      else if (m.setMap) m.setMap(null);   // legacy
+    });
+    polylinesRef.current.forEach(p => {
+      if (p.remove) p.remove();
+      else if (p.setMap) p.setMap(null);
+    });
     markersRef.current = [];
     polylinesRef.current = [];
   }, []);
@@ -174,25 +254,40 @@ export default function GlobePanel() {
     if (!mapReady || !map3dRef.current) return;
     clearOverlays();
     const google = window.google;
-    const map = map3dRef.current;
+    const mapEl = map3dRef.current;
+    const use3d = is3dRef.current;
 
-    // Helper: create Advanced Marker
+    // Helper: create marker (works for both 3D and 2D)
     function addMarker(lat, lng, title, color, icon, onClick) {
       try {
-        const pin = new google.maps.marker.PinElement({
-          background: color,
-          borderColor: '#222',
-          glyphColor: '#fff',
-          scale: 1.1,
-        });
-        const m = new google.maps.marker.AdvancedMarkerElement({
-          map,
-          position: { lat, lng },
-          title,
-          content: pin,
-        });
-        markersRef.current.push(m);
-        if (onClick) m.addEventListener('gmp-click', onClick);
+        if (use3d) {
+          // ── 3D Marker (Map3DElement child) ──────────────────────
+          const marker = new google.maps.maps3d.Marker3DElement({
+            position: { lat, lng, altitude: 100 },
+            label: title,
+            altitudeMode: 'RELATIVE_TO_GROUND',
+            extruded: true,
+          });
+          mapEl.append(marker);
+          markersRef.current.push(marker);
+          if (onClick) marker.addEventListener('gmp-click', onClick);
+        } else {
+          // ── 2D Advanced Marker ──────────────────────────────────
+          const pin = new google.maps.marker.PinElement({
+            background: color,
+            borderColor: '#222',
+            glyphColor: '#fff',
+            scale: 1.1,
+          });
+          const m = new google.maps.marker.AdvancedMarkerElement({
+            map: mapEl,
+            position: { lat, lng },
+            title,
+            content: pin,
+          });
+          markersRef.current.push(m);
+          if (onClick) m.addEventListener('gmp-click', onClick);
+        }
       } catch (e) {
         console.warn('Marker creation failed:', e);
       }
@@ -200,15 +295,33 @@ export default function GlobePanel() {
 
     // Helper: draw polyline
     function addPolyline(pathData, color, weight = 2) {
-      const poly = new google.maps.Polyline({
-        path: pathData.map(p => ({ lat: p.lat, lng: p.lng })),
-        strokeColor: color,
-        strokeWeight: weight,
-        strokeOpacity: 0.8,
-        geodesic: true,
-        map,
-      });
-      polylinesRef.current.push(poly);
+      try {
+        if (use3d) {
+          // ── 3D Polyline ─────────────────────────────────────────
+          const poly = new google.maps.maps3d.Polyline3DElement({
+            coordinates: pathData.map(p => ({ lat: p.lat, lng: p.lng, altitude: (p.alt || 0) })),
+            strokeColor: color,
+            strokeWidth: weight * 2,
+            altitudeMode: 'RELATIVE_TO_GROUND',
+            drawsOccludedSegments: true,
+          });
+          mapEl.append(poly);
+          polylinesRef.current.push(poly);
+        } else {
+          // ── 2D Polyline ─────────────────────────────────────────
+          const poly = new google.maps.Polyline({
+            path: pathData.map(p => ({ lat: p.lat, lng: p.lng })),
+            strokeColor: color,
+            strokeWeight: weight,
+            strokeOpacity: 0.8,
+            geodesic: true,
+            map: mapEl,
+          });
+          polylinesRef.current.push(poly);
+        }
+      } catch (e) {
+        console.warn('Polyline creation failed:', e);
+      }
     }
 
     // -- POIs
@@ -243,8 +356,8 @@ export default function GlobePanel() {
       });
     }
 
-    // -- OSM tile overlay
-    if (layers.osm && map.overlayMapTypes) {
+    // -- OSM tile overlay (flat mode only — not supported on 3D globe)
+    if (!use3d && layers.osm && mapEl.overlayMapTypes) {
       const osmLayer = new google.maps.ImageMapType({
         getTileUrl: (coord, zoom) =>
           `https://tile.openstreetmap.org/${zoom}/${coord.x}/${coord.y}.png`,
@@ -253,21 +366,62 @@ export default function GlobePanel() {
         maxZoom: 19,
         opacity: 0.6,
       });
-      map.overlayMapTypes.clear();
-      map.overlayMapTypes.push(osmLayer);
+      mapEl.overlayMapTypes.clear();
+      mapEl.overlayMapTypes.push(osmLayer);
     }
-  }, [mapReady, layers, pois, flights, satellites, viewMode, clearOverlays]);
+
+    // -- Live ADS-B Flights (real-time)
+    if (layers.liveFlights && liveAircraft.length) {
+      liveAircraft.forEach(ac => {
+        const label = ac.callsign || ac.icao24;
+        addMarker(ac.latitude, ac.longitude, `${label} · ${Math.round(ac.altitude_m)}m`,
+          LAYER_COLORS.liveFlights, '✈️',
+          () => setSelectedEntity({ ...ac, entityType: 'liveAircraft', name: label }));
+      });
+    }
+
+    // -- FAA NAS Flights (US airspace, real-time)
+    if (layers.faaFlights && faaAircraft.length) {
+      faaAircraft.forEach(ac => {
+        const label = ac.callsign || ac.icao24;
+        addMarker(ac.latitude, ac.longitude, `${label} · FAA`,
+          LAYER_COLORS.faaFlights, '🛩️',
+          () => setSelectedEntity({ ...ac, entityType: 'faaAircraft', name: label }));
+      });
+    }
+
+    // -- DOT Feed Events (traffic incidents, safety data)
+    if (layers.dotFeed && dotEvents.length) {
+      dotEvents.forEach(evt => {
+        if (evt.latitude == null || evt.longitude == null) return;
+        const icon = evt.source === 'NHTSA' ? '⚠️' : evt.source === 'BTS' ? '📊' : '🚧';
+        addMarker(evt.latitude, evt.longitude, evt.title || 'DOT Event',
+          LAYER_COLORS.dotFeed, icon,
+          () => setSelectedEntity({ ...evt, entityType: 'dotEvent', name: evt.title }));
+      });
+    }
+  }, [mapReady, layers, pois, flights, satellites, liveAircraft, faaAircraft, dotEvents, viewMode, clearOverlays]);
 
   // ── Fly to location ────────────────────────────────────────────────────
   function flyTo(lat, lng, altitude = 1000) {
     if (!mapReady || !map3dRef.current) return;
-    const map = map3dRef.current;
-    if (map.panTo) {
-      map.panTo({ lat, lng });
-      map.setZoom(Math.max(4, 18 - Math.log2(altitude / 100)));
-      if (is3dRef.current) {
-        map.setTilt(45);
-      }
+    const mapEl = map3dRef.current;
+
+    if (is3dRef.current && mapEl.flyCameraTo) {
+      // ── 3D Globe: animated camera flight ─────────────────────
+      mapEl.flyCameraTo({
+        endCamera: {
+          center: { lat, lng, altitude: 0 },
+          tilt: 55,
+          heading: 0,
+          range: Math.max(1000, altitude * 2),
+        },
+        durationMillis: 2500,
+      });
+    } else if (mapEl.panTo) {
+      // ── 2D Flat: standard pan + zoom ─────────────────────────
+      mapEl.panTo({ lat, lng });
+      mapEl.setZoom(Math.max(4, 18 - Math.log2(altitude / 100)));
     }
   }
 
@@ -389,14 +543,32 @@ export default function GlobePanel() {
           {/* Layers */}
           <div className="globe-card">
             <h3>Layers</h3>
-            {Object.entries(layers).map(([key, val]) => (
-              <label key={key} className="globe-layer-toggle">
-                <input type="checkbox" checked={val}
-                  onChange={() => setLayers(prev => ({ ...prev, [key]: !prev[key] }))} />
-                <span className="layer-dot" style={{ background: LAYER_COLORS[key === 'pois' ? 'poi' : key] || '#888' }} />
-                {key === 'pois' ? 'Points of Interest' : key === 'osm' ? 'OpenStreetMap Overlay' : key.charAt(0).toUpperCase() + key.slice(1)}
-              </label>
-            ))}
+            {Object.entries(layers).map(([key, val]) => {
+              const labelMap = {
+                pois: 'Points of Interest',
+                osm: 'OpenStreetMap Overlay',
+                liveFlights: '✈️ Live ADS-B Flights',
+                faaFlights: '🛩️ FAA NAS Flights (US)',
+                dotFeed: '🚧 DOT Traffic Feed',
+              };
+              const colorKey = key === 'pois' ? 'poi' : key;
+              return (
+                <label key={key} className="globe-layer-toggle">
+                  <input type="checkbox" checked={val}
+                    onChange={() => setLayers(prev => ({ ...prev, [key]: !prev[key] }))} />
+                  <span className="layer-dot" style={{ background: LAYER_COLORS[colorKey] || '#888' }} />
+                  {labelMap[key] || key.charAt(0).toUpperCase() + key.slice(1)}
+                </label>
+              );
+            })}
+            {/* Real-time status indicators */}
+            {(liveFlightsStatus || faaFlightsStatus || dotFeedStatus) && (
+              <div className="globe-realtime-status" style={{ marginTop: '0.5rem', fontSize: '0.72rem', color: '#aaa' }}>
+                {layers.liveFlights && liveFlightsStatus && <div>ADS-B: {liveFlightsStatus}</div>}
+                {layers.faaFlights && faaFlightsStatus && <div>FAA: {faaFlightsStatus}</div>}
+                {layers.dotFeed && dotFeedStatus && <div>DOT: {dotFeedStatus}</div>}
+              </div>
+            )}
           </div>
 
           {/* Quick Fly */}
@@ -427,6 +599,24 @@ export default function GlobePanel() {
                 <span className="stat-val">{satellites.length}</span>
                 <span className="stat-lbl">Satellites</span>
               </div>
+              {layers.liveFlights && (
+                <div className="globe-stat">
+                  <span className="stat-val" style={{ color: LAYER_COLORS.liveFlights }}>{liveAircraft.length}</span>
+                  <span className="stat-lbl">Live ADS-B</span>
+                </div>
+              )}
+              {layers.faaFlights && (
+                <div className="globe-stat">
+                  <span className="stat-val" style={{ color: LAYER_COLORS.faaFlights }}>{faaAircraft.length}</span>
+                  <span className="stat-lbl">FAA NAS</span>
+                </div>
+              )}
+              {layers.dotFeed && (
+                <div className="globe-stat">
+                  <span className="stat-val" style={{ color: LAYER_COLORS.dotFeed }}>{dotEvents.length}</span>
+                  <span className="stat-lbl">DOT Events</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -470,6 +660,9 @@ export default function GlobePanel() {
                   <h4>Features</h4>
                   <ul>
                     <li>✈️ Real-time military &amp; commercial flight tracking</li>
+                    <li>✈️ Live ADS-B flights (OpenSky Network)</li>
+                    <li>🛩️ FAA NAS flights — US airspace in real time</li>
+                    <li>🚧 DOT traffic feed — USDOT, NHTSA, BTS data</li>
                     <li>🛰️ Satellite constellation visualization</li>
                     <li>🗺️ OpenStreetMap data overlay</li>
                     <li>📍 Strategic points of interest</li>
@@ -551,11 +744,45 @@ export default function GlobePanel() {
               </div>
             )}
 
+            {(selectedEntity.entityType === 'liveAircraft' || selectedEntity.entityType === 'faaAircraft') && (
+              <div className="globe-detail-body">
+                <div className="property-list">
+                  <div className="property-row"><span className="prop-key">Callsign</span><span>{selectedEntity.callsign || '—'}</span></div>
+                  <div className="property-row"><span className="prop-key">ICAO24</span><span>{selectedEntity.icao24}</span></div>
+                  <div className="property-row"><span className="prop-key">Country</span><span>{selectedEntity.origin_country}</span></div>
+                  <div className="property-row"><span className="prop-key">Altitude</span><span>{selectedEntity.altitude_m?.toLocaleString()} m</span></div>
+                  <div className="property-row"><span className="prop-key">Speed</span><span>{selectedEntity.velocity_ms?.toFixed(0)} m/s</span></div>
+                  <div className="property-row"><span className="prop-key">Heading</span><span>{selectedEntity.heading?.toFixed(0)}°</span></div>
+                  <div className="property-row"><span className="prop-key">Vertical Rate</span><span>{selectedEntity.vertical_rate?.toFixed(1)} m/s</span></div>
+                  <div className="property-row"><span className="prop-key">On Ground</span><span>{selectedEntity.on_ground ? 'Yes' : 'No'}</span></div>
+                  <div className="property-row"><span className="prop-key">Position</span><span>{selectedEntity.latitude?.toFixed(4)}°, {selectedEntity.longitude?.toFixed(4)}°</span></div>
+                  {selectedEntity.source && <div className="property-row"><span className="prop-key">Source</span><span>{selectedEntity.source}</span></div>}
+                  {selectedEntity.airspace && <div className="property-row"><span className="prop-key">Airspace</span><span>{selectedEntity.airspace}</span></div>}
+                </div>
+              </div>
+            )}
+
+            {selectedEntity.entityType === 'dotEvent' && (
+              <div className="globe-detail-body">
+                <div className="property-list">
+                  <div className="property-row"><span className="prop-key">Title</span><span>{selectedEntity.title}</span></div>
+                  <div className="property-row"><span className="prop-key">Source</span><span>{selectedEntity.source}</span></div>
+                  <div className="property-row"><span className="prop-key">Type</span><span>{selectedEntity.type}</span></div>
+                  <div className="property-row"><span className="prop-key">State</span><span>{selectedEntity.state || '—'}</span></div>
+                  <div className="property-row"><span className="prop-key">Severity</span><span>{selectedEntity.severity}</span></div>
+                  {selectedEntity.latitude != null && (
+                    <div className="property-row"><span className="prop-key">Position</span><span>{selectedEntity.latitude?.toFixed(4)}°, {selectedEntity.longitude?.toFixed(4)}°</span></div>
+                  )}
+                  {selectedEntity.timestamp && <div className="property-row"><span className="prop-key">Timestamp</span><span>{selectedEntity.timestamp}</span></div>}
+                </div>
+              </div>
+            )}
+
             <div className="globe-detail-actions">
               <button onClick={() => {
-                const lat = selectedEntity.lat || selectedEntity.waypoints?.[selectedEntity.waypoints.length - 1]?.lat;
-                const lng = selectedEntity.lng || selectedEntity.waypoints?.[selectedEntity.waypoints.length - 1]?.lng;
-                const alt = selectedEntity.alt || selectedEntity.waypoints?.[selectedEntity.waypoints.length - 1]?.alt || 5000;
+                const lat = selectedEntity.lat || selectedEntity.latitude || selectedEntity.waypoints?.[selectedEntity.waypoints.length - 1]?.lat;
+                const lng = selectedEntity.lng || selectedEntity.longitude || selectedEntity.waypoints?.[selectedEntity.waypoints.length - 1]?.lng;
+                const alt = selectedEntity.alt || selectedEntity.altitude_m || selectedEntity.waypoints?.[selectedEntity.waypoints.length - 1]?.alt || 5000;
                 if (lat != null && lng != null) flyTo(lat, lng, alt);
               }}>📍 Fly To</button>
               <button onClick={() => {
