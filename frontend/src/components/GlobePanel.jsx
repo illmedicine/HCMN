@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Loader } from '@googlemaps/js-api-loader';
+import { setOptions as gmpSetOptions, importLibrary } from '@googlemaps/js-api-loader';
 import { getGlobePOIs, getGlobeFlights, getGlobeSatellites, getGlobeConfig, setGlobeApiKey, sendChatMessage } from '../services/api';
 
 // ---------------------------------------------------------------------------
@@ -29,6 +29,16 @@ const SAT_TYPE_COLORS = {
   'early-warning': '#ffcc00',
 };
 
+const STORAGE_KEY = 'hcmn_google_maps_api_key';
+const REQUIRED_APIS_FALLBACK = [
+  { name: 'Maps JavaScript API', url: 'https://console.cloud.google.com/apis/library/maps-backend.googleapis.com', description: 'Core map rendering, markers, polylines, and controls' },
+  { name: 'Map Tiles API', url: 'https://console.cloud.google.com/apis/library/tile.googleapis.com', description: 'Photorealistic 3D Tiles for the 3D globe view' },
+  { name: 'Places API (New)', url: 'https://console.cloud.google.com/apis/library/places-backend.googleapis.com', description: 'Place cards, search, and autocomplete' },
+];
+
+// Track whether setOptions has already been called (can only be called once)
+let gmpConfigured = false;
+
 // ---------------------------------------------------------------------------
 // COMPONENT
 // ---------------------------------------------------------------------------
@@ -46,14 +56,15 @@ export default function GlobePanel() {
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState('');
 
-  // ── Auto-load API key from backend ──────────────────────────────────
+  // ── Auto-load API key from backend (falls back to localStorage) ──────
   useEffect(() => {
     getGlobeConfig().then(cfg => {
-      if (cfg.apiKey) {
-        setActiveKey(cfg.apiKey);
-        setApiKeyInput(cfg.apiKey);
+      const key = cfg.apiKey || localStorage.getItem(STORAGE_KEY) || '';
+      if (key) {
+        setActiveKey(key);
+        setApiKeyInput(key);
       }
-      if (cfg.requiredAPIs) setRequiredAPIs(cfg.requiredAPIs);
+      setRequiredAPIs(cfg.requiredAPIs?.length ? cfg.requiredAPIs : REQUIRED_APIS_FALLBACK);
       setKeyLoading(false);
     });
   }, []);
@@ -367,6 +378,7 @@ export default function GlobePanel() {
                 <button onClick={async () => {
                   const key = apiKeyInput.trim();
                   if (!key) return;
+                  localStorage.setItem(STORAGE_KEY, key);
                   await setGlobeApiKey(key);
                   setActiveKey(key);
                 }}>
@@ -441,7 +453,7 @@ export default function GlobePanel() {
           {mapError && (
             <div className="globe-error">
               <p>⚠️ {mapError}</p>
-              <button onClick={() => { setActiveKey(''); setMapError(''); setGlobeApiKey(''); }}>Change API Key</button>
+              <button onClick={() => { setActiveKey(''); setMapError(''); localStorage.removeItem(STORAGE_KEY); setGlobeApiKey(''); }}>Change API Key</button>
             </div>
           )}
           {!activeKey && !keyLoading && (
