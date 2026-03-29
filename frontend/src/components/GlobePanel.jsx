@@ -103,7 +103,7 @@ export default function GlobePanel() {
 
     // setOptions can only be called once per page load
     if (!gmpConfigured) {
-      gmpSetOptions({ key: activeKey, v: 'beta' });
+      gmpSetOptions({ key: activeKey, v: 'alpha' });
       gmpConfigured = true;
     }
 
@@ -122,38 +122,38 @@ export default function GlobePanel() {
         maps3dLibRef.current = maps3dLib;
 
         if (viewMode === '3d' && maps3dLib?.Map3DElement) {
-          // Create Map3DElement and append to DOM first
-          const el = new maps3dLib.Map3DElement();
-          el.style.display = 'block';
-          el.style.width = '100%';
-          el.style.height = '100%';
-          el.style.minHeight = '400px';
-          mapRef.current.appendChild(el);
-
-          // Set properties AFTER insertion so the element has layout context
-          el.center = { lat: 0, lng: 0, altitude: 0 };
-          el.range = 25000000;
-          el.tilt = 0;
-          el.heading = 0;
+          // Use innerHTML to create the element as a proper custom element
+          // (avoids constructor issues with Web Component lifecycle)
+          mapRef.current.innerHTML =
+            '<gmp-map-3d ' +
+            'center="0,0,0" ' +
+            'range="25000000" ' +
+            'tilt="0" ' +
+            'heading="0" ' +
+            'style="display:block;width:100%;height:100%;min-height:400px;">' +
+            '</gmp-map-3d>';
+          const el = mapRef.current.querySelector('gmp-map-3d');
 
           map3dRef.current = el;
           is3dRef.current = true;
 
-          // Detect tile loading failure (e.g. Map Tiles API not enabled)
-          let tileLoaded = false;
-          const onCameraChange = () => { tileLoaded = true; };
-          el.addEventListener('gmp-centerchange', onCameraChange);
-          setTimeout(() => {
-            el.removeEventListener('gmp-centerchange', onCameraChange);
-            if (!tileLoaded && map3dRef.current === el) {
-              setMapError(
-                '3D tiles failed to load. Please verify: (1) Map Tiles API is enabled at '
-                + 'console.cloud.google.com/apis/library/tile.googleapis.com '
-                + '(2) Billing is enabled on your Google Cloud project '
-                + '(3) Your API key has no HTTP referrer restrictions blocking this site.'
-              );
-            }
-          }, 12000);
+          // Wait for element to be connected & check for rendering
+          customElements.whenDefined('gmp-map-3d').then(() => {
+            // After element upgrades, check for tile errors after 15s
+            setTimeout(() => {
+              if (map3dRef.current !== el) return;
+              // Check if the element rendered a canvas (tiles loaded)
+              const canvas = el.shadowRoot?.querySelector('canvas');
+              if (!canvas) {
+                setMapError(
+                  '3D tiles did not load. Please verify: '
+                  + '(1) Map Tiles API is enabled at console.cloud.google.com/apis/library/tile.googleapis.com  '
+                  + '(2) Billing is enabled on your Google Cloud project  '
+                  + '(3) Your API key allows this domain (illmedicine.github.io)'
+                );
+              }
+            }, 15000);
+          });
 
           setMapReady(true);
         } else {
@@ -204,7 +204,6 @@ export default function GlobePanel() {
           const m = new google.maps.maps3d.Marker3DElement({
             position: { lat, lng, altitude: 0 },
           });
-          try { m.autofitsCamera = false; } catch (_) {}
           map.appendChild(m);
           markersRef.current.push(m);
           if (onClick) m.addEventListener('gmp-click', onClick);
@@ -242,7 +241,6 @@ export default function GlobePanel() {
             strokeWidth: weight,
             altitudeMode: 'ABSOLUTE',
           });
-          try { poly.autofitsCamera = false; } catch (_) {}
           // Use 'path' property (not deprecated 'coordinates')
           poly.path = coords;
           map.appendChild(poly);
