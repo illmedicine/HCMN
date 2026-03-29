@@ -11,6 +11,7 @@ Aggregates data from multiple sources for a pinned geographic location:
 
 from __future__ import annotations
 
+import base64
 import logging
 import math
 import time
@@ -644,11 +645,12 @@ class TrackingService:
 
             towers: list[CellTower] = []
             for r in data.get("results", [])[:100]:
+                rid = r.get("id", {}) if isinstance(r.get("id"), dict) else {}
                 towers.append(CellTower(
-                    mcc=int(r.get("id", {}).get("mcc", 0)) if isinstance(r.get("id"), dict) else 0,
-                    mnc=int(r.get("id", {}).get("mnc", 0)) if isinstance(r.get("id"), dict) else 0,
-                    lac=int(r.get("id", {}).get("lac", 0)) if isinstance(r.get("id"), dict) else 0,
-                    cell_id=int(r.get("id", {}).get("cid", 0)) if isinstance(r.get("id"), dict) else 0,
+                    mcc=int(rid.get("mcc", 0)),
+                    mnc=int(rid.get("mnc", 0)),
+                    lac=int(rid.get("lac", 0)),
+                    cell_id=int(rid.get("cid", 0)),
                     latitude=float(r.get("trilat", 0)),
                     longitude=float(r.get("trilong", 0)),
                     radio=r.get("type", ""),
@@ -700,7 +702,6 @@ class TrackingService:
 
     def _wigle_auth_headers(self) -> dict[str, str]:
         """Build WiGLE authorization headers from the configured API key."""
-        import base64
         key = self._settings.wigle_api_key
         # If it looks like "user:pass" encode as Basic auth
         if ":" in key:

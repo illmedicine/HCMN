@@ -351,7 +351,7 @@ function demoChatReply(messages) {
   if (last.includes('vessel') || last.includes('ship') || last.includes('boat'))
     return { reply: 'Vessel tracking uses AIS (Automatic Identification System) data showing cargo ships, tankers, passenger vessels, and fishing boats. Each vessel reports its MMSI, position, heading, speed, and destination port.' };
   if (last.includes('cell') || last.includes('tower') || last.includes('phone') || last.includes('imsi'))
-    return { reply: 'Cell tower tracking uses data from OpenCelliD, beaconDB, and WiGLE to locate cell towers by MCC/MNC/LAC/CID. You can search for cell IDs associated with a phone number, cross-reference tower pings to track device movement, and visualise tower positions on the map. Each tower shows its radio type (LTE/5G-NR/UMTS/GSM), operator, signal strength, and coverage range.' };
+    return { reply: 'Cell tower tracking uses data from OpenCelliD, beaconDB, and WiGLE to locate cell towers by MCC/MNC/LAC/CID. You can search for cell IDs associated with a phone number, cross-reference tower pings to track device movement, and visualize tower positions on the map. Each tower shows its radio type (LTE/5G-NR/UMTS/GSM), operator, signal strength, and coverage range.' };
   return { reply: `HCMN is a mesh network intelligence platform with three modules:\n\n1. **Video Deck** — 12 public camera feeds (DOT traffic, EarthCam, weather)\n2. **Tracking** — Aircraft (ADS-B), vessels (AIS), satellites (ISS/Starlink), crime reports, cell towers (OpenCelliD/beaconDB/WiGLE)\n3. **Wi-Fi CSI** — Room presence detection via wireless signal analysis\n\nAsk me about any specific module or data source for more details.` };
 }
 

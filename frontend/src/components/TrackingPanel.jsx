@@ -595,9 +595,10 @@ export default function TrackingPanel() {
                   <PolylineGraphics
                     positions={cellHistory.pings
                       .filter((p) => p.cell_tower?.latitude && p.cell_tower?.longitude)
-                      .map((p) =>
-                        Cesium.Cartesian3.fromDegrees(p.cell_tower.longitude, p.cell_tower.latitude, 100),
-                      )}
+                      .map((p) => {
+                        const ct = p.cell_tower;
+                        return Cesium.Cartesian3.fromDegrees(ct.longitude, ct.latitude, 100);
+                      })}
                     width={3}
                     material={Cesium.Color.fromCssColorString('#f43f5e').withAlpha(0.7)}
                   />
