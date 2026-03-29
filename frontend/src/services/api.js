@@ -871,3 +871,18 @@ export async function getGlobeSatellites() {
   try { return await tryFetch(`${API_BASE}/globe/satellites`); }
   catch { return demoGlobeSatellites(); }
 }
+
+export async function getGlobeConfig() {
+  try { return await tryFetch(`${API_BASE}/globe/config`); }
+  catch { return { apiKey: '', configured: false, requiredAPIs: [] }; }
+}
+
+export async function setGlobeApiKey(apiKey) {
+  try {
+    return await tryFetch(`${API_BASE}/globe/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey }),
+    });
+  } catch { return { ok: false }; }
+}

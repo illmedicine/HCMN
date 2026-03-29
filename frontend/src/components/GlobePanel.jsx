@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader } from '@googlemaps/js-api-loader';
-import { getGlobePOIs, getGlobeFlights, getGlobeSatellites, sendChatMessage } from '../services/api';
+import { getGlobePOIs, getGlobeFlights, getGlobeSatellites, getGlobeConfig, setGlobeApiKey, sendChatMessage } from '../services/api';
 
 // ---------------------------------------------------------------------------
 // CONFIG
 // ---------------------------------------------------------------------------
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 const LAYER_COLORS = {
   military: '#ff4444',
@@ -40,10 +39,24 @@ export default function GlobePanel() {
   const polylinesRef = useRef([]);
   const googleRef = useRef(null);
 
-  const [apiKeyInput, setApiKeyInput] = useState(GOOGLE_MAPS_API_KEY);
-  const [activeKey, setActiveKey] = useState(GOOGLE_MAPS_API_KEY);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [activeKey, setActiveKey] = useState('');
+  const [keyLoading, setKeyLoading] = useState(true);
+  const [requiredAPIs, setRequiredAPIs] = useState([]);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState('');
+
+  // ── Auto-load API key from backend ──────────────────────────────────
+  useEffect(() => {
+    getGlobeConfig().then(cfg => {
+      if (cfg.apiKey) {
+        setActiveKey(cfg.apiKey);
+        setApiKeyInput(cfg.apiKey);
+      }
+      if (cfg.requiredAPIs) setRequiredAPIs(cfg.requiredAPIs);
+      setKeyLoading(false);
+    });
+  }, []);
 
   const [layers, setLayers] = useState({
     flights: true,
@@ -326,14 +339,24 @@ export default function GlobePanel() {
       <div className="globe-layout">
         {/* Sidebar */}
         <aside className="globe-sidebar">
-          {/* API Key */}
-          {!activeKey && (
+          {/* API Key — only shows when not configured */}
+          {!activeKey && !keyLoading && (
             <div className="globe-card">
               <h3>Google Maps API Key</h3>
               <p className="globe-hint">
-                Enter your <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer">Google Maps API key</a> with
-                Maps JavaScript API &amp; Map Tiles API enabled.
+                Enter your API key once — it will be saved to the backend permanently.
               </p>
+              {requiredAPIs.length > 0 && (
+                <div className="globe-required-apis">
+                  <p className="globe-hint" style={{ marginBottom: '0.3rem', fontWeight: 600 }}>Required APIs (enable in Google Cloud Console):</p>
+                  {requiredAPIs.map((api, i) => (
+                    <a key={i} href={api.url} target="_blank" rel="noopener noreferrer" className="globe-api-link">
+                      ✅ {api.name}
+                      <span className="globe-api-desc">{api.description}</span>
+                    </a>
+                  ))}
+                </div>
+              )}
               <div className="globe-key-form">
                 <input
                   type="password"
@@ -341,8 +364,13 @@ export default function GlobePanel() {
                   value={apiKeyInput}
                   onChange={e => setApiKeyInput(e.target.value)}
                 />
-                <button onClick={() => { if (apiKeyInput.trim()) setActiveKey(apiKeyInput.trim()); }}>
-                  Load Map
+                <button onClick={async () => {
+                  const key = apiKeyInput.trim();
+                  if (!key) return;
+                  await setGlobeApiKey(key);
+                  setActiveKey(key);
+                }}>
+                  Save &amp; Load
                 </button>
               </div>
             </div>
@@ -413,20 +441,22 @@ export default function GlobePanel() {
           {mapError && (
             <div className="globe-error">
               <p>⚠️ {mapError}</p>
-              <button onClick={() => { setActiveKey(''); setMapError(''); }}>Change API Key</button>
+              <button onClick={() => { setActiveKey(''); setMapError(''); setGlobeApiKey(''); }}>Change API Key</button>
             </div>
           )}
-          {!activeKey && (
+          {!activeKey && !keyLoading && (
             <div className="globe-placeholder">
               <div className="globe-placeholder-content">
                 <div className="globe-placeholder-icon">🌍</div>
                 <h3>Google Maps 3D Globe</h3>
-                <p>Enter your Google Maps API key in the sidebar to load the interactive 3D globe.</p>
-                <p className="globe-hint">
-                  Requires the <strong>Maps JavaScript API</strong> and <strong>Map Tiles API</strong> enabled in your
-                  <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer"> Google Cloud Console</a>.
-                </p>
+                <p>Enter your Google Maps API key in the sidebar to load the interactive 3D globe. The key is saved to the backend so you only need to set it once.</p>
                 <div className="globe-features-preview">
+                  <h4>Required APIs</h4>
+                  <ul>
+                    <li>🗺️ <a href="https://console.cloud.google.com/apis/library/maps-backend.googleapis.com" target="_blank" rel="noopener noreferrer">Maps JavaScript API</a></li>
+                    <li>🏙️ <a href="https://console.cloud.google.com/apis/library/tile.googleapis.com" target="_blank" rel="noopener noreferrer">Map Tiles API</a> (3D photorealistic tiles)</li>
+                    <li>📍 <a href="https://console.cloud.google.com/apis/library/places-backend.googleapis.com" target="_blank" rel="noopener noreferrer">Places API (New)</a> (place cards &amp; search)</li>
+                  </ul>
                   <h4>Features</h4>
                   <ul>
                     <li>✈️ Real-time military &amp; commercial flight tracking</li>
@@ -437,6 +467,14 @@ export default function GlobePanel() {
                     <li>🃏 Google Place cards &amp; info windows</li>
                   </ul>
                 </div>
+              </div>
+            </div>
+          )}
+          {keyLoading && (
+            <div className="globe-placeholder">
+              <div className="globe-placeholder-content">
+                <div className="globe-placeholder-icon">⏳</div>
+                <h3>Loading configuration…</h3>
               </div>
             </div>
           )}

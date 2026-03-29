@@ -1810,6 +1810,30 @@ body {
   white-space: nowrap;
 }
 
+.globe-required-apis {
+  margin-bottom: 0.5rem;
+}
+.globe-api-link {
+  display: flex;
+  flex-direction: column;
+  padding: 0.3rem 0.4rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+.globe-api-link:hover {
+  background: rgba(100, 180, 255, 0.08);
+}
+.globe-api-desc {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  margin-top: 0.1rem;
+}
+
 .globe-layer-toggle {
   display: flex;
   align-items: center;

@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.config import Settings
-from backend.app.routers import cameras, chat, csi, gotham, sdr, tracking
+from backend.app.routers import cameras, chat, csi, globe, gotham, sdr, tracking
 from backend.app.services.camera_service import CameraService
 from backend.app.services.chat_service import ChatService
 from backend.app.services.csi_service import CSIService
@@ -42,6 +42,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     tracking.init(tracking_service, camera_service)
     chat.init(chat_service)
     gotham.init(gotham_service)
+    globe.init(settings)
 
     yield  # application runs
 
@@ -72,6 +73,7 @@ app.include_router(csi.router)
 app.include_router(tracking.router)
 app.include_router(chat.router)
 app.include_router(gotham.router)
+app.include_router(globe.router)
 
 
 @app.get("/api/health")
