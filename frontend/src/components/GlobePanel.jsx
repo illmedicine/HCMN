@@ -47,7 +47,9 @@ export default function GlobePanel() {
   const map3dRef = useRef(null);
   const markersRef = useRef([]);
   const polylinesRef = useRef([]);
-  const googleRef = useRef(null);
+  const mapsLibRef = useRef(null);
+  const maps3dLibRef = useRef(null);
+  const is3dRef = useRef(false);
 
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [activeKey, setActiveKey] = useState('');
@@ -97,6 +99,7 @@ export default function GlobePanel() {
     if (!activeKey || !mapRef.current) return;
 
     setMapError('');
+    setMapReady(false);
 
     // setOptions can only be called once per page load
     if (!gmpConfigured) {
@@ -104,29 +107,45 @@ export default function GlobePanel() {
       gmpConfigured = true;
     }
 
+    // Clean up previous map content
+    clearOverlays();
+    mapRef.current.innerHTML = '';
+
     (async () => {
       try {
-        const [mapsLib, maps3dLib] = await Promise.all([
+        const [mapsLib, maps3dLib, markerLib] = await Promise.all([
           importLibrary('maps'),
           importLibrary('maps3d').catch(() => null),
+          importLibrary('marker'),
         ]);
-        await importLibrary('marker');
-        const google = window.google;
-        googleRef.current = google;
+        mapsLibRef.current = mapsLib;
+        maps3dLibRef.current = maps3dLib;
 
         if (viewMode === '3d' && maps3dLib?.Map3DElement) {
+          // Create a fresh container div for 3D
+          const container = document.createElement('div');
+          container.style.width = '100%';
+          container.style.height = '100%';
+          mapRef.current.appendChild(container);
+
           const el = new maps3dLib.Map3DElement({
             center: { lat: 20, lng: 0, altitude: 15000000 },
             range: 25000000,
             tilt: 0,
             heading: 0,
           });
-          mapRef.current.innerHTML = '';
-          mapRef.current.appendChild(el);
+          container.appendChild(el);
           map3dRef.current = el;
+          is3dRef.current = true;
           setMapReady(true);
         } else {
-          const m = new mapsLib.Map(mapRef.current, {
+          // Flat map needs a real div child
+          const container = document.createElement('div');
+          container.style.width = '100%';
+          container.style.height = '100%';
+          mapRef.current.appendChild(container);
+
+          const m = new mapsLib.Map(container, {
             center: { lat: 20, lng: 0 },
             zoom: 2,
             mapTypeId: 'hybrid',
@@ -134,6 +153,7 @@ export default function GlobePanel() {
             gestureHandling: 'greedy',
           });
           map3dRef.current = m;
+          is3dRef.current = false;
           setMapReady(true);
         }
       } catch (err) {
@@ -152,62 +172,65 @@ export default function GlobePanel() {
   }, []);
 
   useEffect(() => {
-    if (!mapReady || !googleRef.current) return;
+    if (!mapReady || !map3dRef.current) return;
     clearOverlays();
-    const google = googleRef.current;
+    const google = window.google;
     const map = map3dRef.current;
-    const is3d = viewMode === '3d' && map instanceof google.maps.maps3d?.Map3DElement;
+    const is3d = is3dRef.current;
 
     // Helper: create marker
     function addMarker(lat, lng, title, color, icon, onClick) {
       if (is3d) {
-        // For 3D map, we use Marker3DElement if available
-        if (google.maps.maps3d?.Marker3DElement) {
+        // 3D markers
+        if (google?.maps?.maps3d?.Marker3DElement) {
           const m = new google.maps.maps3d.Marker3DElement({
             position: { lat, lng, altitude: 0 },
-            label: icon || title.charAt(0),
           });
           map.appendChild(m);
           markersRef.current.push(m);
           if (onClick) m.addEventListener('gmp-click', onClick);
         }
       } else {
-        // Standard Advanced Marker
-        const pin = new google.maps.marker.PinElement({
-          background: color,
-          borderColor: '#222',
-          glyphColor: '#fff',
-          glyph: icon || title.charAt(0),
-          scale: 1.1,
-        });
-        const m = new google.maps.marker.AdvancedMarkerElement({
-          map,
-          position: { lat, lng },
-          title,
-          content: pin.element,
-        });
-        markersRef.current.push(m);
-        if (onClick) m.addEventListener('click', onClick);
+        // Flat map — Advanced Marker
+        try {
+          const pin = new google.maps.marker.PinElement({
+            background: color,
+            borderColor: '#222',
+            glyphColor: '#fff',
+            scale: 1.1,
+          });
+          const m = new google.maps.marker.AdvancedMarkerElement({
+            map,
+            position: { lat, lng },
+            title,
+            content: pin,
+          });
+          markersRef.current.push(m);
+          if (onClick) m.addEventListener('click', onClick);
+        } catch (e) {
+          console.warn('Marker creation failed:', e);
+        }
       }
     }
 
     // Helper: draw polyline
-    function addPolyline(path, color, weight = 2) {
+    function addPolyline(pathData, color, weight = 2) {
       if (is3d) {
-        if (google.maps.maps3d?.Polyline3DElement) {
-          const coords = path.map(p => ({ lat: p.lat, lng: p.lng, altitude: (p.alt || 0) }));
+        if (google?.maps?.maps3d?.Polyline3DElement) {
+          const coords = pathData.map(p => ({ lat: p.lat, lng: p.lng, altitude: (p.alt || 0) }));
           const poly = new google.maps.maps3d.Polyline3DElement({
-            coordinates: coords,
             strokeColor: color,
             strokeWidth: weight,
             altitudeMode: 'ABSOLUTE',
           });
+          // Use 'path' property (not deprecated 'coordinates')
+          poly.path = coords;
           map.appendChild(poly);
           polylinesRef.current.push(poly);
         }
       } else {
         const poly = new google.maps.Polyline({
-          path: path.map(p => ({ lat: p.lat, lng: p.lng })),
+          path: pathData.map(p => ({ lat: p.lat, lng: p.lng })),
           strokeColor: color,
           strokeWeight: weight,
           strokeOpacity: 0.8,
@@ -268,9 +291,8 @@ export default function GlobePanel() {
   // ── Fly to location ────────────────────────────────────────────────────
   function flyTo(lat, lng, altitude = 1000) {
     if (!mapReady || !map3dRef.current) return;
-    const google = googleRef.current;
     const map = map3dRef.current;
-    if (map instanceof google.maps.maps3d?.Map3DElement) {
+    if (is3dRef.current) {
       map.flyCameraTo({
         endCamera: { center: { lat, lng, altitude: 0 }, range: altitude * 5, tilt: 55, heading: 0 },
         durationMillis: 2500,
