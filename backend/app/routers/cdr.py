@@ -172,12 +172,13 @@ async def export_to_gotham(
     # Load into Gotham if available
     if _gotham:
         existing = _gotham.get_ontology()
-        # Merge with existing objects/links
-        all_objects = existing.get("objects", []) + data["objects"]
-        all_links = existing.get("links", []) + data["links"]
-        # De-duplicate by ID
-        obj_map = {o["id"]: o for o in all_objects}
-        link_map = {l["id"]: l for l in all_links}
+        # Merge: existing objects first, then CDR data (CDR overrides duplicates)
+        obj_map = {o["id"]: o for o in existing.get("objects", [])}
+        for o in data["objects"]:
+            obj_map[o["id"]] = o
+        link_map = {l["id"]: l for l in existing.get("links", [])}
+        for l in data["links"]:
+            link_map[l["id"]] = l
         _gotham.load(list(obj_map.values()), list(link_map.values()))
 
     return {

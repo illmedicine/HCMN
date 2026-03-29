@@ -19,6 +19,7 @@ Provides:
 from __future__ import annotations
 
 import csv
+import datetime
 import io
 import logging
 import math
@@ -216,7 +217,9 @@ class CDRService:
             relevant = records
 
         # Build adjacency
-        edge_key = lambda a, b: (min(a, b), max(a, b))
+        def _edge_key(a: str, b: str) -> tuple[str, str]:
+            return (min(a, b), max(a, b))
+
         edge_map: dict[tuple[str, str], dict[str, Any]] = {}
         node_map: dict[str, dict[str, Any]] = {}
 
@@ -255,7 +258,7 @@ class CDRService:
 
             # Edge stats
             if a and b:
-                key = edge_key(a, b)
+                key = _edge_key(a, b)
                 if key not in edge_map:
                     edge_map[key] = {
                         "call_count": 0, "total_duration": 0.0, "sms_count": 0,
@@ -782,7 +785,6 @@ def _parse_ts(val: str) -> float:
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",
                 "%Y-%m-%d %H:%M", "%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S"):
         try:
-            import datetime
             dt = datetime.datetime.strptime(val, fmt)
             return dt.timestamp()
         except ValueError:
