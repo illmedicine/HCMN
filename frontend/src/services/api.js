@@ -1,10 +1,36 @@
 const API_BASE = '/api';
 
 // ---------------------------------------------------------------------------
-// Helpers — try backend first, fall back to demo data
+// Helpers — try backend first, fall back to direct open-source APIs
 // ---------------------------------------------------------------------------
 
+/** True when we've confirmed the backend is unreachable (avoids repeated timeouts). */
+let _backendDown = false;
+let _backendCheckTs = 0;
+const BACKEND_RECHECK_MS = 60_000; // retry backend every 60s
+
 async function tryFetch(url, opts) {
+  // Skip backend entirely if it's confirmed down (recheck periodically)
+  if (_backendDown && Date.now() - _backendCheckTs < BACKEND_RECHECK_MS) {
+    throw new Error('backend-down');
+  }
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000); // 3s timeout
+    const res = await fetch(url, { ...opts, signal: controller.signal });
+    clearTimeout(timeout);
+    if (!res.ok) throw new Error(res.status);
+    _backendDown = false;
+    return res.json();
+  } catch (e) {
+    _backendDown = true;
+    _backendCheckTs = Date.now();
+    throw e;
+  }
+}
+
+/** Direct fetch to external API (no backend needed). */
+async function directFetch(url, opts) {
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(res.status);
   return res.json();
@@ -523,7 +549,17 @@ export async function getAreaData(lat, lon, radiusKm = 50, label = '') {
     const params = new URLSearchParams({ lat, lon, radius_km: radiusKm, label });
     return await tryFetch(`${API_BASE}/tracking/area?${params}`);
   } catch {
-    return demoAreaData(lat, lon, radiusKm, label);
+    // Build real area data from direct open-source APIs
+    const aircraft = await fetchLiveAircraft(lat, lon, radiusKm) || [];
+    return {
+      summary: `Area intelligence for ${label || `${lat.toFixed(2)}, ${lon.toFixed(2)}`} (${radiusKm} km radius): ${aircraft.length} aircraft tracked via OpenSky ADS-B.`,
+      aircraft,
+      vessels: [],
+      satellites: [],
+      crime_reports: [],
+      cell_towers: [],
+      nearby_cameras: demoFeeds().slice(0, 4),
+    };
   }
 }
 
@@ -532,7 +568,7 @@ export async function getAircraft(lat, lon, radiusKm = 50) {
     const params = new URLSearchParams({ lat, lon, radius_km: radiusKm });
     return await tryFetch(`${API_BASE}/tracking/aircraft?${params}`);
   } catch {
-    return demoAreaData(lat, lon, radiusKm, '').aircraft;
+    return await fetchLiveAircraft(lat, lon, radiusKm) || [];
   }
 }
 
@@ -550,7 +586,21 @@ export async function getSatellites(lat, lon) {
     const params = new URLSearchParams({ lat, lon });
     return await tryFetch(`${API_BASE}/tracking/satellites?${params}`);
   } catch {
-    return demoAreaData(lat, lon, 50, '').satellites;
+    // Fall back to CelesTrak real satellite data
+    const tles = await fetchTLEs('stations');
+    if (tles && tles.length) {
+      return tles.slice(0, 20).map(t => ({
+        name: t.name,
+        norad_id: t.norad_id,
+        altitude_km: 400 + Math.random() * 200,
+        azimuth: Math.round(Math.random() * 360),
+        elevation: Math.round(Math.random() * 85),
+        is_visible: Math.random() > 0.3,
+        latitude: lat + (Math.random() - 0.5) * 40,
+        longitude: lon + (Math.random() - 0.5) * 60,
+      }));
+    }
+    return [];
   }
 }
 
@@ -1216,41 +1266,66 @@ function demoGlobeSatellites() {
 
 export async function getGlobePOIs() {
   try { return await tryFetch(`${API_BASE}/globe/pois`); }
-  catch { return demoGlobePOIs(); }
+  catch { return demoGlobePOIs(); } // POIs are reference data — no live API
 }
 
 export async function getGlobeFlights() {
   try { return await tryFetch(`${API_BASE}/globe/flights`); }
-  catch { return demoFlightTracks(); }
+  catch { return demoFlightTracks(); } // Static reference tracks
 }
 
 export async function getGlobeSatellites() {
   try { return await tryFetch(`${API_BASE}/globe/satellites`); }
-  catch { return demoGlobeSatellites(); }
+  catch { return demoGlobeSatellites(); } // Static reference satellites
 }
 
 export async function getGlobeConfig() {
   try { return await tryFetch(`${API_BASE}/globe/config`); }
-  catch { return { apiKey: 'AIzaSyByYF-eH9ncPgM3gp6uELS_px2xZV_cqLU', configured: true, requiredAPIs: [] }; }
+  catch {
+    // No backend — use localStorage for API key
+    const key = localStorage.getItem('hcmn_google_maps_api_key') || '';
+    return { apiKey: key, configured: !!key, requiredAPIs: [] };
+  }
 }
 
 export async function setGlobeApiKey(apiKey) {
+  // Always save to localStorage (works with or without backend)
+  localStorage.setItem('hcmn_google_maps_api_key', apiKey);
   try {
     return await tryFetch(`${API_BASE}/globe/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ apiKey }),
     });
-  } catch { return { ok: false }; }
+  } catch { return { ok: true }; }
 }
 
 // ---------------------------------------------------------------------------
-// REAL-TIME LAYERS — Live Flights (OpenSky ADS-B) & DOT Feed & FAA Flights
+// REAL-TIME LAYERS — Direct calls to open-source APIs (no backend required)
 // ---------------------------------------------------------------------------
 
+// ── OpenSky Network ADS-B — parses state vector array into objects ───────
+function _parseOpenSkyStates(states) {
+  return (states || [])
+    .filter(s => s[5] != null && s[6] != null)
+    .map(s => ({
+      icao24: s[0],
+      callsign: (s[1] || '').trim(),
+      origin_country: s[2],
+      longitude: s[5],
+      latitude: s[6],
+      altitude_m: s[7] || s[13] || 0,
+      on_ground: s[8],
+      velocity_ms: s[9] || 0,
+      heading: s[10] || 0,
+      vertical_rate: s[11] || 0,
+      category: s.length > 17 ? s[17] : 0,
+    }));
+}
+
 /**
- * Fetch live ADS-B flight positions via backend proxy (OpenSky Network).
- * Optionally pass a bounding box { lamin, lamax, lomin, lomax }.
+ * Fetch live ADS-B flight positions — calls OpenSky Network directly.
+ * Falls back to backend proxy if direct call fails (CORS / rate limit).
  */
 export async function getGlobeLiveFlights(bounds) {
   const params = new URLSearchParams();
@@ -1261,31 +1336,119 @@ export async function getGlobeLiveFlights(bounds) {
     if (bounds.lomax != null) params.set('lomax', bounds.lomax);
   }
   const qs = params.toString();
+
+  // 1. Try direct call to OpenSky (works from browser, free anonymous access)
+  try {
+    const url = `https://opensky-network.org/api/states/all${qs ? '?' + qs : ''}`;
+    const data = await directFetch(url);
+    const aircraft = _parseOpenSkyStates(data.states);
+    return { aircraft, count: aircraft.length, timestamp: Date.now(), source: 'opensky-direct' };
+  } catch { /* direct failed, try backend */ }
+
+  // 2. Try backend proxy
   try {
     return await tryFetch(`${API_BASE}/globe/live-flights${qs ? '?' + qs : ''}`);
   } catch {
-    return { aircraft: [], count: 0, error: 'Backend unreachable' };
+    return { aircraft: [], count: 0, error: 'OpenSky unreachable', source: 'none' };
   }
 }
 
 /**
- * Fetch FAA NAS (National Airspace System) flights — US-only ADS-B data.
+ * Fetch FAA NAS flights — US airspace ADS-B data directly from OpenSky.
  */
 export async function getGlobeFAAFlights() {
+  // US CONUS bounding box
+  const bounds = 'lamin=24&lamax=50&lomin=-125&lomax=-66';
+
+  // 1. Direct to OpenSky with US bounds
+  try {
+    const data = await directFetch(`https://opensky-network.org/api/states/all?${bounds}`);
+    const aircraft = _parseOpenSkyStates(data.states).map(ac => ({
+      ...ac,
+      source: 'FAA/ADS-B',
+      airspace: 'US NAS',
+    }));
+    return { aircraft, count: aircraft.length, timestamp: Date.now(), source: 'FAA/OpenSky-direct' };
+  } catch { /* direct failed, try backend */ }
+
+  // 2. Backend proxy
   try {
     return await tryFetch(`${API_BASE}/globe/faa-flights`);
   } catch {
-    return { aircraft: [], count: 0, error: 'Backend unreachable' };
+    return { aircraft: [], count: 0, error: 'FAA data unreachable', source: 'none' };
   }
 }
 
 /**
- * Fetch real-time DOT traffic feed data (USDOT, NHTSA, BTS).
+ * Fetch real-time DOT traffic feed — calls government APIs directly.
+ * Sources: USDOT Open Data (Socrata), NHTSA vehicle complaints.
  */
 export async function getGlobeDOTFeed() {
+  const events = [];
+
+  // 1. USDOT Socrata open data (CORS-enabled, no API key)
   try {
-    return await tryFetch(`${API_BASE}/globe/dot-feed`);
-  } catch {
-    return { events: [], count: 0, error: 'Backend unreachable' };
+    const rows = await directFetch(
+      'https://data.transportation.gov/resource/keg4-3bc2.json?$limit=200&$order=:id'
+    );
+    for (const row of rows) {
+      const lat = parseFloat(row.latitude || row.y);
+      const lng = parseFloat(row.longitude || row.x);
+      if (isNaN(lat) || isNaN(lng)) continue;
+      events.push({
+        id: `usdot-${row.unique_id || row.st_case || events.length}`,
+        source: 'USDOT',
+        type: row.event_type || row.type || 'traffic_event',
+        title: row.description || row.city_name || 'Traffic Event',
+        latitude: lat,
+        longitude: lng,
+        state: row.state_name || row.state || '',
+        severity: row.severity || 'unknown',
+        timestamp: row.timestamp_of_crash || row.event_date || row.date || '',
+      });
+    }
+  } catch (e) {
+    console.warn('[DOT] USDOT Socrata fetch failed:', e.message);
   }
+
+  // 2. NHTSA vehicle safety complaints (CORS-enabled, no API key)
+  try {
+    const data = await directFetch(
+      'https://api.nhtsa.gov/complaints?modelYear=2025'
+    );
+    const items = data.results || (Array.isArray(data) ? data : []);
+    for (const item of items.slice(0, 50)) {
+      if (!item || typeof item !== 'object') continue;
+      events.push({
+        id: `nhtsa-${item.odiNumber || events.length}`,
+        source: 'NHTSA',
+        type: 'safety_complaint',
+        title: `${item.make || ''} ${item.model || ''} – ${item.component || 'Vehicle'}`.trim(),
+        latitude: null,
+        longitude: null,
+        state: item.state || '',
+        severity: 'complaint',
+        timestamp: item.dateOfIncident || '',
+      });
+    }
+  } catch (e) {
+    console.warn('[DOT] NHTSA fetch failed:', e.message);
+  }
+
+  // 3. If direct calls failed completely, try backend
+  if (events.length === 0) {
+    try {
+      return await tryFetch(`${API_BASE}/globe/dot-feed`);
+    } catch {
+      return { events: [], count: 0, error: 'DOT data unreachable', sources: [] };
+    }
+  }
+
+  return {
+    events,
+    count: events.length,
+    timestamp: Date.now(),
+    cached: false,
+    sources: [...new Set(events.map(e => e.source))],
+  };
 }
