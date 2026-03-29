@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { fetchLiveAircraft, fetchTLEs, getCellTowers, searchCellByPhone, lookupCellTower, crossReferenceCells } from '../services/api';
+import { fetchLiveAircraft, fetchTLEs, getCellTowers, searchCellByPhone, lookupCellTower, crossReferenceCells, uploadCDR, uploadTowerDump, getContactGraph, trackIMEI, getLocationProfile, exportCDRToGotham } from '../services/api';
 
 /* ---------- CesiumJS + resium ---------- */
 import * as Cesium from 'cesium';
@@ -96,6 +96,17 @@ export default function TrackingPanel() {
   const [tleGroup, setTleGroup] = useState('stations');
   const [autoRefresh, setAutoRefresh] = useState(true);
 
+  /* ---------- CDR Analysis state ---------- */
+  const [cdrUploadResult, setCdrUploadResult] = useState(null);
+  const [contactGraph, setContactGraph] = useState(null);
+  const [cdrTarget, setCdrTarget] = useState('');
+  const [cdrDepth, setCdrDepth] = useState(1);
+  const [imeiSearch, setImeiSearch] = useState('');
+  const [imeiResult, setImeiResult] = useState(null);
+  const [locationProfile, setLocationProfile] = useState(null);
+  const [profilePhone, setProfilePhone] = useState('');
+  const [cdrExportMsg, setCdrExportMsg] = useState('');
+
   const viewerRef = useRef(null);
 
   /* ---------- Fly camera to location ---------- */
@@ -180,6 +191,77 @@ export default function TrackingPanel() {
       flyTo(tower.latitude, tower.longitude, 50000);
     }
     setLoading(false);
+  }
+
+  /* ---------- CDR Upload handler ---------- */
+  async function handleCDRUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    const result = await uploadCDR(file);
+    setCdrUploadResult(result);
+    // Auto-load contact graph after upload
+    const graph = await getContactGraph('', 1);
+    setContactGraph(graph);
+    setLoading(false);
+  }
+
+  /* ---------- Tower Dump Upload handler ---------- */
+  async function handleTowerDumpUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    const result = await uploadTowerDump(file);
+    setCdrUploadResult(result);
+    setLoading(false);
+  }
+
+  /* ---------- Contact Graph handler ---------- */
+  async function handleContactGraph(e) {
+    e.preventDefault();
+    setLoading(true);
+    const graph = await getContactGraph(cdrTarget, cdrDepth);
+    setContactGraph(graph);
+    setLoading(false);
+  }
+
+  /* ---------- IMEI Track handler ---------- */
+  async function handleIMEITrack(e) {
+    e.preventDefault();
+    if (!imeiSearch.trim()) return;
+    setLoading(true);
+    const result = await trackIMEI(imeiSearch.trim());
+    setImeiResult(result);
+    setLoading(false);
+  }
+
+  /* ---------- Location Profile handler ---------- */
+  async function handleLocationProfile(e) {
+    e.preventDefault();
+    if (!profilePhone.trim()) return;
+    setLoading(true);
+    const profile = await getLocationProfile(profilePhone.trim());
+    setLocationProfile(profile);
+    // Add route points to map as cell towers for visualization
+    if (profile?.route_points?.length) {
+      const routeTowers = profile.route_points.map((pt, i) => ({
+        mcc: 0, mnc: 0, lac: 0, cell_id: 90000 + i,
+        latitude: pt.latitude, longitude: pt.longitude,
+        range_m: 500, radio: 'CDR', operator: 'Route',
+        source: 'profile', signal_strength: 0,
+      }));
+      setCellTowers((prev) => [...prev, ...routeTowers]);
+    }
+    setLoading(false);
+  }
+
+  /* ---------- Export to Gotham handler ---------- */
+  async function handleGothamExport() {
+    setLoading(true);
+    const result = await exportCDRToGotham(cdrTarget, cdrDepth);
+    setCdrExportMsg(result.message || `Exported ${result.objects_count} objects, ${result.links_count} links.`);
+    setLoading(false);
+    setTimeout(() => setCdrExportMsg(''), 5000);
   }
 
   /* ---------- Scan button handler ---------- */
@@ -416,6 +498,114 @@ export default function TrackingPanel() {
                 {loading ? 'Looking up…' : '📡 Locate Tower'}
               </button>
             </form>
+          </div>
+
+          {/* CDR Analysis Section */}
+          <div className="tracking-card" style={{ borderLeft: '3px solid #f59e0b' }}>
+            <h3>📊 CDR Analysis</h3>
+            <div className="input-group">
+              <label>Upload CDR CSV</label>
+              <input type="file" accept=".csv" onChange={handleCDRUpload} style={{ fontSize: '0.85em' }} />
+            </div>
+            <div className="input-group" style={{ marginTop: 6 }}>
+              <label>Upload Tower Dump</label>
+              <input type="file" accept=".csv" onChange={handleTowerDumpUpload} style={{ fontSize: '0.85em' }} />
+            </div>
+            {cdrUploadResult && (
+              <div style={{ marginTop: 8, fontSize: '0.85em', color: '#94a3b8' }}>
+                <p>{cdrUploadResult.summary}</p>
+                <p style={{ color: '#f59e0b' }}>
+                  {cdrUploadResult.unique_numbers} numbers · {cdrUploadResult.unique_imeis} IMEIs · {cdrUploadResult.unique_towers} towers
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="tracking-card" style={{ borderLeft: '3px solid #f59e0b' }}>
+            <h3>🕸️ Contact Graph</h3>
+            <form onSubmit={handleContactGraph}>
+              <div className="input-group">
+                <label>Target Number (optional)</label>
+                <input type="text" value={cdrTarget} onChange={(e) => setCdrTarget(e.target.value)} placeholder="+1-555-0101" />
+              </div>
+              <div className="input-group">
+                <label>BFS Depth</label>
+                <input type="number" min="1" max="5" value={cdrDepth} onChange={(e) => setCdrDepth(parseInt(e.target.value) || 1)} />
+              </div>
+              <button type="submit" className="btn-search" disabled={loading}>
+                {loading ? 'Building…' : '🕸️ Build Graph'}
+              </button>
+            </form>
+            {contactGraph && (
+              <div style={{ marginTop: 8, fontSize: '0.85em', color: '#94a3b8' }}>
+                <p>{contactGraph.nodes?.length || 0} nodes · {contactGraph.edges?.length || 0} edges</p>
+                <p>{contactGraph.total_calls || 0} calls · {contactGraph.total_sms || 0} SMS</p>
+                {contactGraph.communities?.length > 0 && (
+                  <p style={{ color: '#a78bfa' }}>{contactGraph.communities.length} communities detected</p>
+                )}
+              </div>
+            )}
+            <button
+              className="btn-search"
+              onClick={handleGothamExport}
+              disabled={loading}
+              style={{ marginTop: 6, background: '#1e293b', borderColor: '#a78bfa', color: '#a78bfa' }}
+            >
+              🔗 Export to Gotham
+            </button>
+            {cdrExportMsg && <p style={{ fontSize: '0.8em', color: '#10b981', marginTop: 4 }}>{cdrExportMsg}</p>}
+          </div>
+
+          <div className="tracking-card" style={{ borderLeft: '3px solid #f59e0b' }}>
+            <h3>📱 IMEI Tracker</h3>
+            <form onSubmit={handleIMEITrack}>
+              <div className="input-group">
+                <label>IMEI</label>
+                <input type="text" value={imeiSearch} onChange={(e) => setImeiSearch(e.target.value)} placeholder="352099001761481" />
+              </div>
+              <button type="submit" className="btn-search" disabled={loading}>
+                {loading ? 'Tracking…' : '🔍 Track Device'}
+              </button>
+            </form>
+            {imeiResult && (
+              <div style={{ marginTop: 8, fontSize: '0.85em', color: '#94a3b8' }}>
+                <p>{imeiResult.summary}</p>
+                {imeiResult.is_shared && <p style={{ color: '#f43f5e' }}>⚠ Multi-SIM device detected</p>}
+                {imeiResult.phone_numbers?.length > 0 && (
+                  <p>SIMs: {imeiResult.phone_numbers.join(', ')}</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="tracking-card" style={{ borderLeft: '3px solid #f59e0b' }}>
+            <h3>📍 Location Profile</h3>
+            <form onSubmit={handleLocationProfile}>
+              <div className="input-group">
+                <label>Phone Number</label>
+                <input type="text" value={profilePhone} onChange={(e) => setProfilePhone(e.target.value)} placeholder="+1-555-0101" />
+              </div>
+              <button type="submit" className="btn-search" disabled={loading}>
+                {loading ? 'Profiling…' : '📍 Build Profile'}
+              </button>
+            </form>
+            {locationProfile && (
+              <div style={{ marginTop: 8, fontSize: '0.85em', color: '#94a3b8' }}>
+                <p>{locationProfile.summary}</p>
+                {locationProfile.home_location && (
+                  <p style={{ color: '#3b82f6' }}>🏠 Home: {locationProfile.home_location.label}</p>
+                )}
+                {locationProfile.work_location && (
+                  <p style={{ color: '#10b981' }}>🏢 Work: {locationProfile.work_location.label}</p>
+                )}
+                {locationProfile.total_distance_km > 0 && (
+                  <p>📏 Total movement: {locationProfile.total_distance_km} km</p>
+                )}
+                {locationProfile.active_hours?.length > 0 && (
+                  <p>⏰ Active: {locationProfile.active_hours.map(h => `${h}:00`).join(', ')}</p>
+                )}
+              </div>
+            )}
           </div>
 
           {(aircraft.length > 0 || satellites.length > 0 || cellTowers.length > 0) && (
@@ -761,6 +951,105 @@ export default function TrackingPanel() {
                           <td className="mono">{p.signal_dbm ? `${p.signal_dbm} dBm` : '—'}</td>
                           <td className="mono">{p.cell_tower?.latitude?.toFixed(4) || '—'}°</td>
                           <td className="mono">{p.cell_tower?.longitude?.toFixed(4) || '—'}°</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* CDR Contact Graph table */}
+            {contactGraph?.nodes?.length > 0 && (
+              <div className="data-table-card">
+                <h4>🕸️ Contact Graph ({contactGraph.nodes.length} nodes, {contactGraph.edges?.length || 0} edges)</h4>
+                <div className="data-table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Phone</th>
+                        <th>Calls</th>
+                        <th>Duration</th>
+                        <th>SMS</th>
+                        <th>IMEI</th>
+                        <th>Top Tower</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {contactGraph.nodes.map((n, i) => (
+                        <tr key={i}>
+                          <td className="mono">{n.phone_number}</td>
+                          <td className="mono">{n.call_count}</td>
+                          <td className="mono">{Math.round((n.total_duration_sec || 0) / 60)}m</td>
+                          <td className="mono">{n.sms_count || 0}</td>
+                          <td className="mono" style={{ fontSize: '0.8em' }}>{n.imei ? n.imei.slice(-6) : '—'}</td>
+                          <td className="mono">{n.most_used_tower || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {contactGraph.edges?.length > 0 && (
+                  <>
+                    <h4 style={{ marginTop: 12 }}>📞 Call Edges</h4>
+                    <div className="data-table-scroll">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>From</th>
+                            <th>To</th>
+                            <th>Calls</th>
+                            <th>Duration</th>
+                            <th>SMS</th>
+                            <th>Weight</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {contactGraph.edges.map((e, i) => (
+                            <tr key={i}>
+                              <td className="mono">{e.source}</td>
+                              <td className="mono">{e.target}</td>
+                              <td className="mono">{e.call_count}</td>
+                              <td className="mono">{Math.round((e.total_duration_sec || 0) / 60)}m</td>
+                              <td className="mono">{e.sms_count || 0}</td>
+                              <td className="mono">{e.weight?.toFixed(2) || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Location Profile table */}
+            {locationProfile?.route_points?.length > 0 && (
+              <div className="data-table-card">
+                <h4>📍 Location Profile — {locationProfile.phone_number}</h4>
+                <div className="data-table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Location</th>
+                        <th>Lat</th>
+                        <th>Lon</th>
+                        <th>Distance to Next</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {locationProfile.route_points.map((pt, i) => (
+                        <tr key={i}>
+                          <td className="mono">{i + 1}</td>
+                          <td>{pt.label || '—'}</td>
+                          <td className="mono">{pt.latitude?.toFixed(4)}°</td>
+                          <td className="mono">{pt.longitude?.toFixed(4)}°</td>
+                          <td className="mono">
+                            {locationProfile.tower_distances_km?.[i] != null
+                              ? `${locationProfile.tower_distances_km[i]} km`
+                              : '—'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

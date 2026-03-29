@@ -296,6 +296,111 @@ class TrackingAreaData(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# CDR (Call Detail Record) analysis models – inspired by gigaTrace & Cellyzer
+# ---------------------------------------------------------------------------
+
+class CDRRecord(BaseModel):
+    """A single Call Detail Record parsed from telco data."""
+
+    id: str = ""
+    calling_number: str = Field(description="Calling party (A-number)")
+    called_number: str = Field(description="Called party (B-number)")
+    call_type: str = Field(default="voice", description="voice, sms, data")
+    start_time: float = Field(description="Unix epoch of call start")
+    duration_sec: float = Field(default=0.0, description="Duration in seconds")
+    cell_id_start: int = Field(default=0, description="Cell tower at call start")
+    cell_id_end: int = Field(default=0, description="Cell tower at call end")
+    lac_start: int = Field(default=0, description="LAC at call start")
+    lac_end: int = Field(default=0, description="LAC at call end")
+    mcc: int = Field(default=0, description="Mobile Country Code")
+    mnc: int = Field(default=0, description="Mobile Network Code")
+    imei: str = Field(default="", description="Device IMEI")
+    imsi: str = Field(default="", description="Subscriber IMSI")
+
+
+class CDRUploadResult(BaseModel):
+    """Result of uploading and parsing CDR data."""
+
+    total_records: int = 0
+    unique_numbers: int = 0
+    unique_imeis: int = 0
+    unique_towers: int = 0
+    date_range_start: float = 0.0
+    date_range_end: float = 0.0
+    summary: str = ""
+
+
+class ContactNode(BaseModel):
+    """A node in the CDR contact graph (a phone number / subscriber)."""
+
+    phone_number: str
+    call_count: int = 0
+    total_duration_sec: float = 0.0
+    sms_count: int = 0
+    imei: str = ""
+    imsi: str = ""
+    first_seen: float = 0.0
+    last_seen: float = 0.0
+    most_used_tower: int = 0
+    home_location: GeoLocation | None = None
+    work_location: GeoLocation | None = None
+    label: str = ""
+
+
+class ContactEdge(BaseModel):
+    """An edge in the contact graph (calls/SMS between two numbers)."""
+
+    source: str = Field(description="Calling number")
+    target: str = Field(description="Called number")
+    call_count: int = 0
+    total_duration_sec: float = 0.0
+    sms_count: int = 0
+    first_contact: float = 0.0
+    last_contact: float = 0.0
+    weight: float = Field(default=0.0, description="Edge weight based on communication frequency")
+
+
+class ContactGraph(BaseModel):
+    """Contact graph built from CDR data – nodes are subscribers, edges are calls/SMS."""
+
+    nodes: list[ContactNode] = []
+    edges: list[ContactEdge] = []
+    total_calls: int = 0
+    total_sms: int = 0
+    date_range_start: float = 0.0
+    date_range_end: float = 0.0
+    communities: list[list[str]] = Field(default=[], description="Detected communities (groups of connected numbers)")
+
+
+class IMEIDevice(BaseModel):
+    """IMEI/IMSI device tracking record."""
+
+    imei: str
+    imsi: str = ""
+    phone_numbers: list[str] = Field(default=[], description="Numbers associated with this IMEI")
+    first_seen: float = 0.0
+    last_seen: float = 0.0
+    tower_history: list[CellTower] = []
+    pings: list[CellTowerPing] = []
+    is_shared: bool = Field(default=False, description="True if multiple SIMs used on this device")
+    summary: str = ""
+
+
+class LocationProfile(BaseModel):
+    """Location behavior profile derived from CDR tower data."""
+
+    phone_number: str
+    home_location: GeoLocation | None = None
+    work_location: GeoLocation | None = None
+    frequent_locations: list[GeoLocation] = []
+    route_points: list[GeoLocation] = Field(default=[], description="Ordered route reconstruction from tower pings")
+    tower_distances_km: list[float] = Field(default=[], description="Distances between consecutive towers in route")
+    total_distance_km: float = 0.0
+    active_hours: list[int] = Field(default=[], description="Hours of day with most activity (0-23)")
+    summary: str = ""
+
+
+# ---------------------------------------------------------------------------
 # AI Chat models
 # ---------------------------------------------------------------------------
 
