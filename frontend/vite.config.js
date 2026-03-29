@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import cesium from 'vite-plugin-cesium'
 import { resolve } from 'path'
 import { writeFileSync, readFileSync } from 'fs'
 
@@ -18,7 +19,12 @@ function spa404Plugin() {
 
 export default defineConfig({
   base: '/HCMN/',
-  plugins: [react(), spa404Plugin()],
+  plugins: [react(), cesium(), spa404Plugin()],
+  resolve: {
+    alias: {
+      'satellite.js': resolve('node_modules/satellite.js/dist/satellite.es.js'),
+    },
+  },
   server: {
     proxy: {
       '/api': {

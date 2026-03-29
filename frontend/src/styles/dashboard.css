@@ -348,7 +348,15 @@ body {
   letter-spacing: 0.05em;
 }
 
-.quad-video { flex: 1; position: relative; min-height: 120px; }
+.quad-video { flex: 1; position: relative; min-height: 180px; }
+
+.video-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #000;
+  display: block;
+}
 
 .video-placeholder {
   width: 100%;
@@ -639,12 +647,27 @@ body {
   background: #000;
   border: 1px solid var(--border);
   border-radius: 0.5rem;
-  height: 450px;
+  height: 550px;
   position: relative;
   overflow: hidden;
 }
 
 .tracking-map canvas { width: 100%; height: 100%; }
+
+/* CesiumJS viewer overrides */
+.cesium-wrapper .cesium-viewer { width: 100% !important; height: 100% !important; }
+.cesium-wrapper .cesium-viewer-bottom { display: none; }
+.cesium-wrapper .cesium-widget-credits { display: none !important; }
+
+.auto-refresh-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.auto-refresh-toggle input { accent-color: var(--accent-green); }
 
 .tracking-data-panels {
   display: grid;

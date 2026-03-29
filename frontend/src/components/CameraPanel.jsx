@@ -73,11 +73,11 @@ export default function CameraPanel() {
 
   const sources = [
     { value: null, label: 'All Sources' },
+    { value: 'youtube_live', label: 'YouTube Live' },
+    { value: 'skyline', label: 'SkylineWebcams' },
+    { value: 'earthcam', label: 'EarthCam' },
     { value: 'dot_traffic', label: 'Traffic Cams' },
     { value: 'weather', label: 'Weather' },
-    { value: 'earthcam', label: 'EarthCam' },
-    { value: 'ip_camera', label: 'IP Cameras' },
-    { value: 'cctv', label: 'CCTV' },
   ];
 
   const quadCount = selectedFeeds.length;
@@ -162,20 +162,33 @@ export default function CameraPanel() {
                     </div>
                   </div>
                   <div className="quad-video">
-                    <div className="video-placeholder">
-                      <div className="video-overlay">
-                        <span className="camera-icon">🎥</span>
-                        <span>{feed.name}</span>
-                        {feed.location && (
-                          <span className="video-location">
-                            📍 {feed.location.label || `${feed.location.latitude.toFixed(4)}, ${feed.location.longitude.toFixed(4)}`}
-                          </span>
-                        )}
-                        <a href={feed.stream_url} target="_blank" rel="noopener noreferrer" className="stream-link">
-                          Open Stream ↗
-                        </a>
+                    {feed.embed_url ? (
+                      <iframe
+                        src={feed.embed_url}
+                        title={feed.name}
+                        className="video-iframe"
+                        allow="autoplay; encrypted-media; picture-in-picture"
+                        sandbox="allow-scripts allow-same-origin allow-popups"
+                        allowFullScreen
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="video-placeholder">
+                        <div className="video-overlay">
+                          <span className="camera-icon">🎥</span>
+                          <span>{feed.name}</span>
+                          {feed.location && (
+                            <span className="video-location">
+                              📍 {feed.location.label || `${feed.location.latitude.toFixed(4)}, ${feed.location.longitude.toFixed(4)}`}
+                            </span>
+                          )}
+                          <a href={feed.stream_url} target="_blank" rel="noopener noreferrer" className="stream-link">
+                            Open Stream ↗
+                          </a>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                   <div className="quad-footer">
                     <span className="source-tag">{feed.source}</span>

@@ -10,8 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "cesium": "^1.139.1",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "resium": "^1.20.0",
+    "satellite.js": "^5.0.0",
+    "vite-plugin-cesium": "^1.2.23"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

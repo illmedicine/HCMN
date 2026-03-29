@@ -1,5 +1,17 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { getAreaData, getAircraft, getSatellites, getCrimeData } from '../services/api';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { fetchLiveAircraft, fetchTLEs } from '../services/api';
+
+/* ---------- CesiumJS + resium ---------- */
+import * as Cesium from 'cesium';
+import { Viewer, Entity, PolylineGraphics, LabelGraphics, PointGraphics } from 'resium';
+import 'cesium/Build/Cesium/Widgets/widgets.css';
+
+/* ---------- satellite.js for TLE propagation ---------- */
+import * as satellite from 'satellite.js';
+
+// Use Cesium Ion default token (free tier, provides base imagery & terrain)
+Cesium.Ion.defaultAccessToken =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlYWE1OWUxNy1mMWZiLTQzYjYtYTQ0OS1kMWFjYmFkNjc5YzciLCJpZCI6NTc3MzMsImlhdCI6MTYyNzg0NTE4Mn0.XcKpgANiY19MC4bdFUXMVEBToBmqS8kuYpUlxJHYZxk';
 
 const PRESET_LOCATIONS = [
   { label: 'New York City', lat: 40.7128, lon: -74.006 },
@@ -13,298 +25,245 @@ const PRESET_LOCATIONS = [
 ];
 
 function formatAlt(m) {
-  if (m >= 1000) return `${(m / 1000).toFixed(1)}km`;
-  return `${Math.round(m)}m`;
+  if (m == null) return '—';
+  if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
+  return `${Math.round(m)} m`;
 }
 
 function formatSpeed(ms) {
+  if (ms == null) return '—';
   return `${Math.round(ms * 3.6)} km/h`;
 }
 
-function severityColor(severity) {
-  switch (severity) {
-    case 'person': return 'var(--accent-red)';
-    case 'property': return 'var(--accent-amber)';
-    default: return 'var(--text-secondary)';
+/* ---------- propagate a single TLE to lat/lon/alt ---------- */
+function propagateTLE(tle1, tle2) {
+  try {
+    const satrec = satellite.twoline2satrec(tle1, tle2);
+    const now = new Date();
+    const pv = satellite.propagate(satrec, now);
+    if (!pv.position) return null;
+    const gmst = satellite.gstime(now);
+    const geo = satellite.eciToGeodetic(pv.position, gmst);
+    return {
+      latitude: satellite.degreesLat(geo.latitude),
+      longitude: satellite.degreesLong(geo.longitude),
+      altitude_km: geo.height,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/* ---------- compute sample orbit path (~90 min ahead) ---------- */
+function computeOrbitPath(tle1, tle2, steps = 120) {
+  try {
+    const satrec = satellite.twoline2satrec(tle1, tle2);
+    const now = Date.now();
+    const positions = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = new Date(now + i * 45000); // 45-sec steps ≈ 90 min total
+      const pv = satellite.propagate(satrec, t);
+      if (!pv.position) continue;
+      const gmst = satellite.gstime(t);
+      const geo = satellite.eciToGeodetic(pv.position, gmst);
+      positions.push(
+        Cesium.Cartesian3.fromDegrees(
+          satellite.degreesLong(geo.longitude),
+          satellite.degreesLat(geo.latitude),
+          geo.height * 1000,
+        ),
+      );
+    }
+    return positions;
+  } catch {
+    return [];
   }
 }
 
 export default function TrackingPanel() {
   const [lat, setLat] = useState('40.7128');
   const [lon, setLon] = useState('-74.0060');
-  const [radius, setRadius] = useState('50');
+  const [radius, setRadius] = useState('200');
   const [label, setLabel] = useState('New York City');
-  const [areaData, setAreaData] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  const [aircraft, setAircraft] = useState([]);
+  const [satellites, setSatellites] = useState([]);
   const [activeLayer, setActiveLayer] = useState('all');
-  const mapCanvasRef = useRef(null);
+  const [tleGroup, setTleGroup] = useState('stations');
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const fetchData = useCallback(async () => {
+  const viewerRef = useRef(null);
+
+  /* ---------- Fly camera to location ---------- */
+  const flyTo = useCallback((latitude, longitude, alt = 800000) => {
+    const viewer = viewerRef.current?.cesiumElement;
+    if (!viewer) return;
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, alt),
+      duration: 1.5,
+    });
+  }, []);
+
+  /* ---------- Fetch live aircraft from OpenSky ---------- */
+  const loadAircraft = useCallback(async () => {
+    const cLat = parseFloat(lat);
+    const cLon = parseFloat(lon);
+    const r = parseFloat(radius);
+    if (isNaN(cLat) || isNaN(cLon)) return;
+    const result = await fetchLiveAircraft(cLat, cLon, r);
+    if (result) setAircraft(result);
+  }, [lat, lon, radius]);
+
+  /* ---------- Fetch satellite TLEs and propagate ---------- */
+  const loadSatellites = useCallback(async () => {
+    const tles = await fetchTLEs(tleGroup);
+    if (!tles) return;
+    // Limit to 50 for UI perf
+    const propagated = tles
+      .slice(0, 50)
+      .map((t) => {
+        const pos = propagateTLE(t.tle1, t.tle2);
+        if (!pos) return null;
+        return { ...t, ...pos };
+      })
+      .filter(Boolean);
+    setSatellites(propagated);
+  }, [tleGroup]);
+
+  /* ---------- Scan button handler ---------- */
+  async function handleSearch(e) {
+    e.preventDefault();
     setLoading(true);
-    try {
-      const data = await getAreaData(parseFloat(lat), parseFloat(lon), parseFloat(radius), label);
-      setAreaData(data);
-    } catch {
-      setAreaData(null);
-    }
+    await Promise.all([loadAircraft(), loadSatellites()]);
+    flyTo(parseFloat(lat), parseFloat(lon));
     setLoading(false);
-  }, [lat, lon, radius, label]);
+  }
 
-  useEffect(() => { drawMap(); }, [areaData, activeLayer]);
+  /* ---------- Auto-refresh aircraft every 15s ---------- */
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(loadAircraft, 15000);
+    return () => clearInterval(id);
+  }, [autoRefresh, loadAircraft]);
+
+  /* ---------- Re-propagate satellites every 30s ---------- */
+  useEffect(() => {
+    if (satellites.length === 0) return;
+    const id = setInterval(() => {
+      setSatellites((prev) =>
+        prev.map((s) => {
+          const pos = propagateTLE(s.tle1, s.tle2);
+          return pos ? { ...s, ...pos } : s;
+        }),
+      );
+    }, 30000);
+    return () => clearInterval(id);
+  }, [satellites.length]);
 
   function selectPreset(preset) {
     setLat(String(preset.lat));
     setLon(String(preset.lon));
     setLabel(preset.label);
-  }
-
-  function handleSearch(e) {
-    e.preventDefault();
-    fetchData();
+    flyTo(preset.lat, preset.lon);
   }
 
   function popOutModule() {
     const w = window.open('', '_blank', 'width=1400,height=900,menubar=no,toolbar=no');
     if (!w) return;
-    w.document.title = 'HCMN – Satellite & GPS Tracking';
-    w.document.body.innerHTML = '<div style="background:#0a0e17;color:#e2e8f0;height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif"><h2>Module 2 – Satellite & GPS Tracking</h2><p>Pop-out window active.</p></div>';
+    w.document.title = 'HCMN – Satellite & Flight Tracking';
+    w.document.body.innerHTML =
+      '<div style="background:#0a0e17;color:#e2e8f0;height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif"><h2>Module 2 – Pop-out</h2></div>';
   }
 
-  function drawMap() {
-    const canvas = mapCanvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * window.devicePixelRatio;
-    canvas.height = rect.height * window.devicePixelRatio;
-    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-    const w = rect.width;
-    const h = rect.height;
-
-    // Dark map background
-    ctx.fillStyle = '#0d1117';
-    ctx.fillRect(0, 0, w, h);
-
-    // Draw simplified world outline (equirectangular projection)
-    const cLat = parseFloat(lat) || 0;
-    const cLon = parseFloat(lon) || 0;
-    const radiusKm = parseFloat(radius) || 50;
-
-    // Projection helpers
-    const zoom = Math.min(w, h) / (radiusKm * 0.06);
-    function projX(longitude) { return w / 2 + (longitude - cLon) * zoom * Math.cos(cLat * Math.PI / 180); }
-    function projY(latitude) { return h / 2 - (latitude - cLat) * zoom; }
-
-    // Grid
-    ctx.strokeStyle = '#1a2234';
-    ctx.lineWidth = 0.5;
-    for (let gLat = -90; gLat <= 90; gLat += 10) {
-      const y = projY(gLat);
-      if (y >= 0 && y <= h) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-      }
-    }
-    for (let gLon = -180; gLon <= 180; gLon += 10) {
-      const x = projX(gLon);
-      if (x >= 0 && x <= w) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-      }
-    }
-
-    // Pinned location circle
-    const px = projX(cLon);
-    const py = projY(cLat);
-    ctx.beginPath();
-    ctx.arc(px, py, radiusKm * zoom * 0.01, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.08)';
-    ctx.fill();
-
-    // Center pin
-    ctx.beginPath();
-    ctx.arc(px, py, 6, 0, Math.PI * 2);
-    ctx.fillStyle = '#3b82f6';
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    if (!areaData) {
-      ctx.fillStyle = '#475569';
-      ctx.font = '14px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Pin a location and search to see tracking data', w / 2, h / 2 + 40);
-      return;
-    }
-
-    // Draw aircraft
-    if (activeLayer === 'all' || activeLayer === 'aircraft') {
-      areaData.aircraft.forEach(ac => {
-        const ax = projX(ac.longitude);
-        const ay = projY(ac.latitude);
-        if (ax < 0 || ax > w || ay < 0 || ay > h) return;
-
-        ctx.save();
-        ctx.translate(ax, ay);
-        ctx.rotate((ac.heading || 0) * Math.PI / 180);
-        ctx.fillStyle = ac.on_ground ? '#94a3b8' : '#f59e0b';
-        ctx.beginPath();
-        ctx.moveTo(0, -8);
-        ctx.lineTo(-5, 6);
-        ctx.lineTo(0, 3);
-        ctx.lineTo(5, 6);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-
-        ctx.fillStyle = '#f59e0b';
-        ctx.font = '9px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText(ac.callsign || ac.icao24, ax + 10, ay - 2);
-      });
-    }
-
-    // Draw vessels
-    if (activeLayer === 'all' || activeLayer === 'vessels') {
-      areaData.vessels.forEach(v => {
-        const vx = projX(v.longitude);
-        const vy = projY(v.latitude);
-        if (vx < 0 || vx > w || vy < 0 || vy > h) return;
-
-        ctx.beginPath();
-        ctx.arc(vx, vy, 5, 0, Math.PI * 2);
-        ctx.fillStyle = '#06b6d4';
-        ctx.fill();
-        ctx.strokeStyle = '#0e7490';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        ctx.fillStyle = '#06b6d4';
-        ctx.font = '8px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText(v.name || v.mmsi, vx + 8, vy + 3);
-      });
-    }
-
-    // Draw satellites
-    if (activeLayer === 'all' || activeLayer === 'satellites') {
-      areaData.satellites.forEach(sat => {
-        const sx = projX(sat.longitude);
-        const sy = projY(sat.latitude);
-
-        ctx.beginPath();
-        ctx.arc(sx, sy, 4, 0, Math.PI * 2);
-        ctx.fillStyle = sat.is_visible ? '#a78bfa' : '#6b7280';
-        ctx.fill();
-
-        // Orbit ring
-        ctx.beginPath();
-        ctx.arc(sx, sy, 12, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(167, 139, 250, 0.3)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        ctx.fillStyle = '#a78bfa';
-        ctx.font = '8px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(sat.name, sx, sy - 16);
-      });
-    }
-
-    // Draw crime reports as heat dots
-    if (activeLayer === 'all' || activeLayer === 'crime') {
-      areaData.crime_reports.forEach(cr => {
-        const cx = projX(cr.longitude);
-        const cy = projY(cr.latitude);
-        if (cx < 0 || cx > w || cy < 0 || cy > h) return;
-
-        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 20);
-        grad.addColorStop(0, cr.severity === 'person' ? 'rgba(239,68,68,0.6)' : 'rgba(245,158,11,0.5)');
-        grad.addColorStop(1, 'transparent');
-        ctx.fillStyle = grad;
-        ctx.fillRect(cx - 20, cy - 20, 40, 40);
-
-        ctx.beginPath();
-        ctx.arc(cx, cy, 3, 0, Math.PI * 2);
-        ctx.fillStyle = cr.severity === 'person' ? '#ef4444' : '#f59e0b';
-        ctx.fill();
-      });
-    }
-
-    // Draw nearby camera indicators
-    if (activeLayer === 'all' || activeLayer === 'cameras') {
-      areaData.nearby_cameras.forEach(cam => {
-        if (!cam.location) return;
-        const camx = projX(cam.location.longitude);
-        const camy = projY(cam.location.latitude);
-        if (camx < 0 || camx > w || camy < 0 || camy > h) return;
-
-        ctx.fillStyle = '#10b981';
-        ctx.font = '14px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('📹', camx, camy);
-
-        ctx.fillStyle = '#10b981';
-        ctx.font = '8px monospace';
-        ctx.fillText(cam.name, camx, camy + 14);
-      });
-    }
-
-    // Coord labels
-    ctx.fillStyle = '#475569';
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(`${cLat.toFixed(4)}°N, ${cLon.toFixed(4)}°E`, 8, h - 8);
-    ctx.textAlign = 'right';
-    ctx.fillText(`R: ${radiusKm}km`, w - 8, h - 8);
-  }
+  /* ---------- Satellite orbit lines (memoized) ---------- */
+  const satOrbits = useMemo(() => {
+    if (activeLayer !== 'all' && activeLayer !== 'satellites') return [];
+    return satellites
+      .slice(0, 10)
+      .map((s) => ({
+        id: s.norad_id,
+        name: s.name,
+        positions: computeOrbitPath(s.tle1, s.tle2),
+      }))
+      .filter((o) => o.positions.length > 1);
+  }, [satellites, activeLayer]);
 
   const layers = [
     { id: 'all', label: '🌐 All', color: '#3b82f6' },
     { id: 'aircraft', label: '✈️ Aircraft', color: '#f59e0b' },
-    { id: 'vessels', label: '🚢 Vessels', color: '#06b6d4' },
     { id: 'satellites', label: '🛰️ Satellites', color: '#a78bfa' },
-    { id: 'crime', label: '🔴 Crime', color: '#ef4444' },
-    { id: 'cameras', label: '📹 Cameras', color: '#10b981' },
   ];
+
+  const tleGroups = [
+    { id: 'stations', label: 'Space Stations' },
+    { id: 'visual', label: 'Bright Sats' },
+    { id: 'weather', label: 'Weather' },
+    { id: 'gps', label: 'GPS' },
+    { id: 'starlink', label: 'Starlink' },
+  ];
+
+  const showAircraft = activeLayer === 'all' || activeLayer === 'aircraft';
+  const showSatellites = activeLayer === 'all' || activeLayer === 'satellites';
 
   return (
     <div className="module-panel tracking-module">
       <div className="module-header">
         <div className="module-title">
           <span className="module-icon">🌍</span>
-          <h2>Module 2 – Satellite & GPS Tracking</h2>
+          <h2>Module 2 – Satellite &amp; Flight Tracking</h2>
+          <span className="feed-count">
+            {aircraft.length} flights · {satellites.length} sats
+          </span>
         </div>
         <div className="module-actions">
-          <button className="btn-popout" onClick={popOutModule} title="Open in new window">⧉ Pop Out</button>
+          <label className="auto-refresh-toggle">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+            />
+            Auto-refresh
+          </label>
+          <button className="btn-popout" onClick={popOutModule} title="Open in new window">
+            ⧉ Pop Out
+          </button>
         </div>
       </div>
 
       <div className="tracking-layout">
-        {/* Control Sidebar */}
+        {/* SIDEBAR */}
         <div className="tracking-sidebar">
-          {/* Location Search */}
           <div className="tracking-card">
             <h3>📍 Pin Location</h3>
             <form onSubmit={handleSearch}>
               <div className="input-group">
                 <label>Latitude</label>
-                <input type="number" step="any" value={lat} onChange={e => setLat(e.target.value)} />
+                <input type="number" step="any" value={lat} onChange={(e) => setLat(e.target.value)} />
               </div>
               <div className="input-group">
                 <label>Longitude</label>
-                <input type="number" step="any" value={lon} onChange={e => setLon(e.target.value)} />
+                <input type="number" step="any" value={lon} onChange={(e) => setLon(e.target.value)} />
               </div>
               <div className="input-group">
                 <label>Radius (km)</label>
-                <input type="number" step="1" min="1" max="500" value={radius} onChange={e => setRadius(e.target.value)} />
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  max="500"
+                  value={radius}
+                  onChange={(e) => setRadius(e.target.value)}
+                />
               </div>
               <div className="input-group">
                 <label>Label</label>
-                <input type="text" value={label} onChange={e => setLabel(e.target.value)} placeholder="Location name" />
+                <input
+                  type="text"
+                  value={label}
+                  onChange={(e) => setLabel(e.target.value)}
+                  placeholder="Location name"
+                />
               </div>
               <button type="submit" className="btn-search" disabled={loading}>
                 {loading ? 'Scanning…' : '🔍 Scan Area'}
@@ -312,11 +271,10 @@ export default function TrackingPanel() {
             </form>
           </div>
 
-          {/* Quick Presets */}
           <div className="tracking-card">
             <h3>⚡ Quick Locations</h3>
             <div className="preset-grid">
-              {PRESET_LOCATIONS.map(p => (
+              {PRESET_LOCATIONS.map((p) => (
                 <button key={p.label} className="preset-btn" onClick={() => selectPreset(p)}>
                   {p.label}
                 </button>
@@ -324,11 +282,10 @@ export default function TrackingPanel() {
             </div>
           </div>
 
-          {/* Layer Toggles */}
           <div className="tracking-card">
             <h3>🗂️ Data Layers</h3>
             <div className="layer-toggles">
-              {layers.map(l => (
+              {layers.map((l) => (
                 <button
                   key={l.id}
                   className={`layer-btn ${activeLayer === l.id ? 'active' : ''}`}
@@ -341,166 +298,242 @@ export default function TrackingPanel() {
             </div>
           </div>
 
-          {/* Data Summary */}
-          {areaData && (
+          <div className="tracking-card">
+            <h3>🛰️ Satellite Group</h3>
+            <div className="layer-toggles">
+              {tleGroups.map((g) => (
+                <button
+                  key={g.id}
+                  className={`layer-btn ${tleGroup === g.id ? 'active' : ''}`}
+                  style={tleGroup === g.id ? { borderColor: '#a78bfa', color: '#a78bfa' } : {}}
+                  onClick={() => setTleGroup(g.id)}
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {(aircraft.length > 0 || satellites.length > 0) && (
             <div className="tracking-card summary-card">
               <h3>📊 Area Summary</h3>
-              <p className="summary-text">{areaData.summary}</p>
               <div className="summary-stats">
                 <div className="stat">
-                  <span className="stat-num">{areaData.aircraft.length}</span>
+                  <span className="stat-num">{aircraft.length}</span>
                   <span className="stat-label">Aircraft</span>
                 </div>
                 <div className="stat">
-                  <span className="stat-num">{areaData.vessels.length}</span>
-                  <span className="stat-label">Vessels</span>
-                </div>
-                <div className="stat">
-                  <span className="stat-num">{areaData.satellites.length}</span>
+                  <span className="stat-num">{satellites.length}</span>
                   <span className="stat-label">Satellites</span>
-                </div>
-                <div className="stat">
-                  <span className="stat-num">{areaData.crime_reports.length}</span>
-                  <span className="stat-label">Crime Reports</span>
-                </div>
-                <div className="stat">
-                  <span className="stat-num">{areaData.nearby_cameras.length}</span>
-                  <span className="stat-label">Cameras</span>
                 </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* Map + Data Panels */}
+        {/* GLOBE + TABLES */}
         <div className="tracking-main">
-          {/* Map */}
-          <div className="tracking-map">
-            <canvas ref={mapCanvasRef} />
+          <div className="tracking-map cesium-wrapper">
+            <Viewer
+              ref={viewerRef}
+              full={false}
+              timeline={false}
+              animation={false}
+              homeButton={false}
+              geocoder={false}
+              navigationHelpButton={false}
+              sceneModePicker={true}
+              baseLayerPicker={false}
+              fullscreenButton={false}
+              infoBox={true}
+              selectionIndicator={true}
+              style={{ width: '100%', height: '100%' }}
+            >
+              {/* Aircraft */}
+              {showAircraft &&
+                aircraft.map((ac) => (
+                  <Entity
+                    key={ac.icao24}
+                    name={ac.callsign || ac.icao24}
+                    description={`<table style="width:100%">
+                      <tr><td>Callsign</td><td><b>${ac.callsign || '—'}</b></td></tr>
+                      <tr><td>ICAO24</td><td>${ac.icao24}</td></tr>
+                      <tr><td>Country</td><td>${ac.origin_country}</td></tr>
+                      <tr><td>Altitude</td><td>${formatAlt(ac.altitude_m)}</td></tr>
+                      <tr><td>Speed</td><td>${formatSpeed(ac.velocity_ms)}</td></tr>
+                      <tr><td>Heading</td><td>${Math.round(ac.heading)}°</td></tr>
+                      <tr><td>Status</td><td>${ac.on_ground ? 'On Ground' : 'Airborne'}</td></tr>
+                    </table>`}
+                    position={Cesium.Cartesian3.fromDegrees(ac.longitude, ac.latitude, ac.altitude_m || 0)}
+                  >
+                    <PointGraphics
+                      pixelSize={ac.on_ground ? 6 : 8}
+                      color={
+                        ac.on_ground
+                          ? Cesium.Color.GRAY
+                          : Cesium.Color.fromCssColorString('#f59e0b')
+                      }
+                      outlineColor={Cesium.Color.WHITE}
+                      outlineWidth={1}
+                    />
+                    <LabelGraphics
+                      text={ac.callsign || ac.icao24}
+                      font="11px monospace"
+                      fillColor={Cesium.Color.fromCssColorString('#f59e0b')}
+                      style={Cesium.LabelStyle.FILL_AND_OUTLINE}
+                      outlineColor={Cesium.Color.BLACK}
+                      outlineWidth={2}
+                      pixelOffset={new Cesium.Cartesian2(12, -4)}
+                      scale={0.9}
+                      distanceDisplayCondition={new Cesium.DistanceDisplayCondition(0, 2000000)}
+                    />
+                  </Entity>
+                ))}
+
+              {/* Satellites */}
+              {showSatellites &&
+                satellites.map((sat) => (
+                  <Entity
+                    key={sat.norad_id}
+                    name={sat.name}
+                    description={`<table style="width:100%">
+                      <tr><td>Name</td><td><b>${sat.name}</b></td></tr>
+                      <tr><td>NORAD ID</td><td>${sat.norad_id}</td></tr>
+                      <tr><td>Altitude</td><td>${sat.altitude_km?.toFixed(0) || '—'} km</td></tr>
+                      <tr><td>Inclination</td><td>${sat.inclination?.toFixed(1) || '—'}°</td></tr>
+                      <tr><td>Period</td><td>${sat.period_min?.toFixed(1) || '—'} min</td></tr>
+                      <tr><td>Lat / Lon</td><td>${sat.latitude?.toFixed(3)}° / ${sat.longitude?.toFixed(3)}°</td></tr>
+                    </table>`}
+                    position={Cesium.Cartesian3.fromDegrees(
+                      sat.longitude,
+                      sat.latitude,
+                      (sat.altitude_km || 400) * 1000,
+                    )}
+                  >
+                    <PointGraphics
+                      pixelSize={6}
+                      color={Cesium.Color.fromCssColorString('#a78bfa')}
+                      outlineColor={Cesium.Color.WHITE}
+                      outlineWidth={1}
+                    />
+                    <LabelGraphics
+                      text={sat.name}
+                      font="10px monospace"
+                      fillColor={Cesium.Color.fromCssColorString('#c4b5fd')}
+                      style={Cesium.LabelStyle.FILL_AND_OUTLINE}
+                      outlineColor={Cesium.Color.BLACK}
+                      outlineWidth={2}
+                      pixelOffset={new Cesium.Cartesian2(10, -4)}
+                      scale={0.8}
+                      distanceDisplayCondition={new Cesium.DistanceDisplayCondition(0, 15000000)}
+                    />
+                  </Entity>
+                ))}
+
+              {/* Orbit paths */}
+              {showSatellites &&
+                satOrbits.map((orbit) => (
+                  <Entity key={`orbit-${orbit.id}`} name={`${orbit.name} orbit`}>
+                    <PolylineGraphics
+                      positions={orbit.positions}
+                      width={1.5}
+                      material={Cesium.Color.fromCssColorString('#a78bfa').withAlpha(0.4)}
+                    />
+                  </Entity>
+                ))}
+
+              {/* Pinned search location */}
+              <Entity
+                name={label}
+                position={Cesium.Cartesian3.fromDegrees(parseFloat(lon) || 0, parseFloat(lat) || 0)}
+              >
+                <PointGraphics
+                  pixelSize={10}
+                  color={Cesium.Color.fromCssColorString('#3b82f6')}
+                  outlineColor={Cesium.Color.WHITE}
+                  outlineWidth={2}
+                />
+                <LabelGraphics
+                  text={label}
+                  font="13px sans-serif"
+                  fillColor={Cesium.Color.WHITE}
+                  style={Cesium.LabelStyle.FILL_AND_OUTLINE}
+                  outlineColor={Cesium.Color.BLACK}
+                  outlineWidth={3}
+                  pixelOffset={new Cesium.Cartesian2(0, -20)}
+                />
+              </Entity>
+            </Viewer>
           </div>
 
           {/* Data Tables */}
-          {areaData && (
-            <div className="tracking-data-panels">
-              {/* Aircraft Table */}
-              {(activeLayer === 'all' || activeLayer === 'aircraft') && areaData.aircraft.length > 0 && (
-                <div className="data-table-card">
-                  <h4>✈️ Aircraft ({areaData.aircraft.length})</h4>
-                  <div className="data-table-scroll">
-                    <table className="data-table">
-                      <thead>
-                        <tr><th>Callsign</th><th>Country</th><th>Alt</th><th>Speed</th><th>Heading</th><th>Status</th></tr>
-                      </thead>
-                      <tbody>
-                        {areaData.aircraft.map((ac, i) => (
-                          <tr key={i}>
-                            <td className="mono">{ac.callsign || ac.icao24}</td>
-                            <td>{ac.origin_country}</td>
-                            <td className="mono">{formatAlt(ac.altitude_m)}</td>
-                            <td className="mono">{formatSpeed(ac.velocity_ms)}</td>
-                            <td className="mono">{Math.round(ac.heading)}°</td>
-                            <td><span className={`status-badge ${ac.on_ground ? 'ground' : 'airborne'}`}>{ac.on_ground ? 'Ground' : 'Airborne'}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+          <div className="tracking-data-panels">
+            {showAircraft && aircraft.length > 0 && (
+              <div className="data-table-card">
+                <h4>✈️ Live Aircraft ({aircraft.length})</h4>
+                <div className="data-table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Callsign</th>
+                        <th>Country</th>
+                        <th>Alt</th>
+                        <th>Speed</th>
+                        <th>Heading</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {aircraft.slice(0, 50).map((ac, i) => (
+                        <tr key={i}>
+                          <td className="mono">{ac.callsign || ac.icao24}</td>
+                          <td>{ac.origin_country}</td>
+                          <td className="mono">{formatAlt(ac.altitude_m)}</td>
+                          <td className="mono">{formatSpeed(ac.velocity_ms)}</td>
+                          <td className="mono">{Math.round(ac.heading)}°</td>
+                          <td>
+                            <span className={`status-badge ${ac.on_ground ? 'ground' : 'airborne'}`}>
+                              {ac.on_ground ? 'Ground' : 'Airborne'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* Vessels Table */}
-              {(activeLayer === 'all' || activeLayer === 'vessels') && areaData.vessels.length > 0 && (
-                <div className="data-table-card">
-                  <h4>🚢 Vessels ({areaData.vessels.length})</h4>
-                  <div className="data-table-scroll">
-                    <table className="data-table">
-                      <thead>
-                        <tr><th>Name</th><th>Type</th><th>Speed</th><th>Heading</th><th>Destination</th></tr>
-                      </thead>
-                      <tbody>
-                        {areaData.vessels.map((v, i) => (
-                          <tr key={i}>
-                            <td className="mono">{v.name || v.mmsi}</td>
-                            <td>{v.vessel_type}</td>
-                            <td className="mono">{v.speed_knots.toFixed(1)} kts</td>
-                            <td className="mono">{Math.round(v.heading)}°</td>
-                            <td>{v.destination}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+            {showSatellites && satellites.length > 0 && (
+              <div className="data-table-card">
+                <h4>🛰️ Satellites ({satellites.length})</h4>
+                <div className="data-table-scroll">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>NORAD ID</th>
+                        <th>Alt (km)</th>
+                        <th>Lat</th>
+                        <th>Lon</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {satellites.map((s, i) => (
+                        <tr key={i}>
+                          <td className="mono">{s.name}</td>
+                          <td className="mono">{s.norad_id}</td>
+                          <td className="mono">{s.altitude_km?.toFixed(0) || '—'}</td>
+                          <td className="mono">{s.latitude?.toFixed(2)}°</td>
+                          <td className="mono">{s.longitude?.toFixed(2)}°</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              )}
-
-              {/* Satellites Table */}
-              {(activeLayer === 'all' || activeLayer === 'satellites') && areaData.satellites.length > 0 && (
-                <div className="data-table-card">
-                  <h4>🛰️ Satellites ({areaData.satellites.length})</h4>
-                  <div className="data-table-scroll">
-                    <table className="data-table">
-                      <thead>
-                        <tr><th>Name</th><th>NORAD ID</th><th>Altitude</th><th>Azimuth</th><th>Elevation</th><th>Visible</th></tr>
-                      </thead>
-                      <tbody>
-                        {areaData.satellites.map((s, i) => (
-                          <tr key={i}>
-                            <td className="mono">{s.name}</td>
-                            <td className="mono">{s.norad_id}</td>
-                            <td className="mono">{s.altitude_km.toFixed(0)} km</td>
-                            <td className="mono">{s.azimuth.toFixed(1)}°</td>
-                            <td className="mono">{s.elevation.toFixed(1)}°</td>
-                            <td><span className={`status-badge ${s.is_visible ? 'visible' : 'hidden'}`}>{s.is_visible ? 'Yes' : 'No'}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Crime Reports Table */}
-              {(activeLayer === 'all' || activeLayer === 'crime') && areaData.crime_reports.length > 0 && (
-                <div className="data-table-card">
-                  <h4>🔴 Crime Reports ({areaData.crime_reports.length})</h4>
-                  <div className="data-table-scroll">
-                    <table className="data-table">
-                      <thead>
-                        <tr><th>Type</th><th>Description</th><th>Severity</th><th>Location</th></tr>
-                      </thead>
-                      <tbody>
-                        {areaData.crime_reports.map((cr, i) => (
-                          <tr key={i}>
-                            <td><strong>{cr.incident_type}</strong></td>
-                            <td>{cr.description}</td>
-                            <td><span className="severity-badge" style={{ color: severityColor(cr.severity) }}>{cr.severity}</span></td>
-                            <td className="mono">{cr.latitude.toFixed(4)}, {cr.longitude.toFixed(4)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Nearby Cameras */}
-              {(activeLayer === 'all' || activeLayer === 'cameras') && areaData.nearby_cameras.length > 0 && (
-                <div className="data-table-card">
-                  <h4>📹 Nearby Camera Feeds ({areaData.nearby_cameras.length})</h4>
-                  <div className="nearby-cam-grid">
-                    {areaData.nearby_cameras.map(cam => (
-                      <div key={cam.id} className="nearby-cam-card">
-                        <span className="cam-name">{cam.name}</span>
-                        <span className="cam-source">{cam.source}</span>
-                        {cam.is_live && <span className="live-badge-sm">● LIVE</span>}
-                        <span className="cam-hint">Open in Module 1 →</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

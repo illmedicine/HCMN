@@ -15,23 +15,99 @@ function jitter(base, pct = 0.15) {
 }
 
 // ---------------------------------------------------------------------------
-// DEMO DATA GENERATORS
+// LIVE OPEN-SOURCE APIs (called directly from frontend)
+// ---------------------------------------------------------------------------
+
+// OpenSky Network — free anonymous access, returns real ADS-B aircraft positions
+// https://openskynetwork.github.io/opensky-api/rest.html
+export async function fetchLiveAircraft(lat, lon, radiusKm = 100) {
+  const deg = radiusKm / 111;
+  const url = `https://opensky-network.org/api/states/all?lamin=${lat - deg}&lamax=${lat + deg}&lomin=${lon - deg}&lomax=${lon + deg}`;
+  try {
+    const data = await (await fetch(url)).json();
+    if (!data.states) return [];
+    return data.states
+      .filter(s => s[5] != null && s[6] != null)
+      .map(s => ({
+        icao24: s[0],
+        callsign: (s[1] || '').trim(),
+        origin_country: s[2],
+        longitude: s[5],
+        latitude: s[6],
+        altitude_m: s[7] || s[13] || 0,
+        on_ground: s[8],
+        velocity_ms: s[9] || 0,
+        heading: s[10] || 0,
+        vertical_rate: s[11] || 0,
+      }));
+  } catch {
+    return null; // will trigger demo fallback
+  }
+}
+
+// CelesTrak — free TLE data in JSON format for satellite orbit propagation
+// https://celestrak.org/NORAD/elements/
+export async function fetchTLEs(group = 'stations') {
+  const groups = {
+    stations: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=json',
+    starlink: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=json',
+    active: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json',
+    visual: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=visual&FORMAT=json',
+    weather: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=weather&FORMAT=json',
+    gps: 'https://celestrak.org/NORAD/elements/gp.php?GROUP=gps-ops&FORMAT=json',
+  };
+  try {
+    const url = groups[group] || groups.stations;
+    const data = await (await fetch(url)).json();
+    return data.map(gp => ({
+      name: gp.OBJECT_NAME,
+      norad_id: String(gp.NORAD_CAT_ID),
+      tle1: gp.TLE_LINE1,
+      tle2: gp.TLE_LINE2,
+      epoch: gp.EPOCH,
+      inclination: gp.INCLINATION,
+      period_min: gp.PERIOD,
+      object_type: gp.OBJECT_TYPE,
+    }));
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CAMERA FEED DATABASE — expanded with embeddable live streams
 // ---------------------------------------------------------------------------
 
 function demoFeeds() {
   return [
-    { id: 'nyc-times-sq', name: 'NYC Times Square', source: 'earthcam', is_live: true, stream_url: 'https://www.earthcam.com/usa/newyork/timessquare/', location: { label: 'New York, NY', latitude: 40.758, longitude: -73.9855 } },
-    { id: 'nyc-brooklyn-bridge', name: 'NYC Brooklyn Bridge', source: 'dot_traffic', is_live: true, stream_url: 'https://webcams.nyctmc.org/google_popup.php?cid=208', location: { label: 'New York, NY', latitude: 40.7061, longitude: -73.9969 } },
-    { id: 'nyc-fdr-drive', name: 'NYC FDR Drive @ 42nd', source: 'dot_traffic', is_live: true, stream_url: 'https://webcams.nyctmc.org/google_popup.php?cid=373', location: { label: 'New York, NY', latitude: 40.749, longitude: -73.969 } },
-    { id: 'nyc-5th-ave', name: 'NYC 5th Avenue', source: 'earthcam', is_live: true, stream_url: 'https://www.earthcam.com/usa/newyork/5thavenue/', location: { label: 'New York, NY', latitude: 40.7484, longitude: -73.9967 } },
-    { id: 'la-hwy-101', name: 'LA Highway 101', source: 'dot_traffic', is_live: true, stream_url: 'https://cwwp2.dot.ca.gov/vm/streamlist.htm', location: { label: 'Los Angeles, CA', latitude: 34.0522, longitude: -118.2437 } },
-    { id: 'sf-golden-gate', name: 'SF Golden Gate Bridge', source: 'earthcam', is_live: true, stream_url: 'https://www.earthcam.com/usa/california/sanfrancisco/goldengate/', location: { label: 'San Francisco, CA', latitude: 37.8199, longitude: -122.4783 } },
-    { id: 'chi-michigan-ave', name: 'Chicago Michigan Ave', source: 'dot_traffic', is_live: true, stream_url: 'https://www.travelmidwest.com/', location: { label: 'Chicago, IL', latitude: 41.8827, longitude: -87.6233 } },
-    { id: 'miami-south-beach', name: 'Miami South Beach', source: 'earthcam', is_live: true, stream_url: 'https://www.earthcam.com/usa/florida/miamibeach/', location: { label: 'Miami, FL', latitude: 25.7826, longitude: -80.1341 } },
-    { id: 'london-abbey-road', name: 'London Abbey Road', source: 'earthcam', is_live: true, stream_url: 'https://www.earthcam.com/world/england/london/abbeyroad/', location: { label: 'London, UK', latitude: 51.5320, longitude: -0.1778 } },
-    { id: 'tokyo-shibuya', name: 'Tokyo Shibuya Crossing', source: 'earthcam', is_live: true, stream_url: 'https://www.earthcam.com/world/japan/tokyo/shibuya/', location: { label: 'Tokyo, Japan', latitude: 35.6595, longitude: 139.7004 } },
-    { id: 'wx-radar-us', name: 'US Weather Radar', source: 'weather', is_live: true, stream_url: 'https://radar.weather.gov/', location: { label: 'United States', latitude: 39.8283, longitude: -98.5795 } },
-    { id: 'wx-storm-chaser', name: 'Storm Chaser Feed', source: 'weather', is_live: false, stream_url: 'https://www.windy.com/', location: { label: 'Central US', latitude: 35.0, longitude: -97.0 } },
+    // YouTube Live streams (embeddable via iframe)
+    { id: 'yt-jackson-hole', name: 'Jackson Hole Town Square', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/DoLMfjRDmSM?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=DoLMfjRDmSM', location: { label: 'Jackson Hole, WY', latitude: 43.4799, longitude: -110.7624 } },
+    { id: 'yt-miami-beach', name: 'Miami Beach Live', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/IFzwnhJMFm8?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=IFzwnhJMFm8', location: { label: 'Miami Beach, FL', latitude: 25.7907, longitude: -80.1300 } },
+    { id: 'yt-tokyo-shibuya', name: 'Shibuya Scramble Crossing', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/DjdUEyjx8GM?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=DjdUEyjx8GM', location: { label: 'Tokyo, Japan', latitude: 35.6595, longitude: 139.7004 } },
+    { id: 'yt-nyc-times-sq', name: 'NYC Times Square 4K', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/eJ7ZkQ5TC08?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=eJ7ZkQ5TC08', location: { label: 'New York, NY', latitude: 40.758, longitude: -73.9855 } },
+    { id: 'yt-iss-live', name: 'ISS Earth Live Feed (NASA)', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/P9C25Un7xaM?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=P9C25Un7xaM', location: { label: 'Low Earth Orbit', latitude: 0, longitude: 0 } },
+    { id: 'yt-naples-vesuvius', name: 'Naples – Mt. Vesuvius', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/RtU_mdL2vBM?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=RtU_mdL2vBM', location: { label: 'Naples, Italy', latitude: 40.8518, longitude: 14.2681 } },
+    { id: 'yt-la-airport', name: 'LAX Airport Live', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/lc4kn8ZnFhk?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=lc4kn8ZnFhk', location: { label: 'Los Angeles, CA', latitude: 33.9425, longitude: -118.4081 } },
+    { id: 'yt-rio-copacabana', name: 'Rio Copacabana Beach', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/oL2pnFSMdBE?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=oL2pnFSMdBE', location: { label: 'Rio de Janeiro, Brazil', latitude: -22.9714, longitude: -43.1823 } },
+    { id: 'yt-dublin', name: 'Dublin City Live', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/S60pTMhHXx8?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=S60pTMhHXx8', location: { label: 'Dublin, Ireland', latitude: 53.3498, longitude: -6.2603 } },
+    { id: 'yt-st-maarten', name: 'St. Maarten Airport (Maho Beach)', source: 'youtube_live', is_live: true, embed_url: 'https://www.youtube.com/embed/wUZ-EU2B8kU?autoplay=1&mute=1', stream_url: 'https://www.youtube.com/watch?v=wUZ-EU2B8kU', location: { label: "St. Maarten", latitude: 18.0425, longitude: -63.1089 } },
+    // Skyline Webcams (embed via iframe)
+    { id: 'sky-ny-brooklyn', name: 'NYC Brooklyn Bridge Pan', source: 'skyline', is_live: true, embed_url: 'https://www.skylinewebcams.com/webcam.html?id=nyc-brooklyn', stream_url: 'https://www.skylinewebcams.com/en/webcam/united-states/new-york/new-york/brooklyn-bridge.html', location: { label: 'New York, NY', latitude: 40.7061, longitude: -73.9969 } },
+    { id: 'sky-rome-colosseum', name: 'Rome Colosseum', source: 'skyline', is_live: true, embed_url: 'https://www.skylinewebcams.com/webcam.html?id=rome-colosseum', stream_url: 'https://www.skylinewebcams.com/en/webcam/italia/lazio/roma/colosseo.html', location: { label: 'Rome, Italy', latitude: 41.8902, longitude: 12.4922 } },
+    { id: 'sky-santorini', name: 'Santorini Sunset', source: 'skyline', is_live: true, embed_url: 'https://www.skylinewebcams.com/webcam.html?id=santorini', stream_url: 'https://www.skylinewebcams.com/en/webcam/ellada/notio-aigaio/santorini/santorini.html', location: { label: 'Santorini, Greece', latitude: 36.3932, longitude: 25.4615 } },
+    // EarthCam
+    { id: 'ec-times-sq', name: 'Times Square EarthCam', source: 'earthcam', is_live: true, embed_url: 'https://www.earthcam.com/cams/common/icons/ec-embed-player.html?cam=tsrobo3', stream_url: 'https://www.earthcam.com/usa/newyork/timessquare/', location: { label: 'New York, NY', latitude: 40.758, longitude: -73.9855 } },
+    { id: 'ec-abbey-road', name: 'London Abbey Road', source: 'earthcam', is_live: true, embed_url: 'https://www.earthcam.com/cams/common/icons/ec-embed-player.html?cam=abbeyroad', stream_url: 'https://www.earthcam.com/world/england/london/abbeyroad/', location: { label: 'London, UK', latitude: 51.5320, longitude: -0.1778 } },
+    { id: 'ec-bourbon-st', name: 'New Orleans Bourbon St', source: 'earthcam', is_live: true, embed_url: 'https://www.earthcam.com/cams/common/icons/ec-embed-player.html?cam=bourbonstreet', stream_url: 'https://www.earthcam.com/usa/louisiana/neworleans/bourbonstreet/', location: { label: 'New Orleans, LA', latitude: 29.9584, longitude: -90.0654 } },
+    // DOT traffic cams
+    { id: 'dot-nyc-lincoln', name: 'NYC Lincoln Tunnel', source: 'dot_traffic', is_live: true, stream_url: 'https://webcams.nyctmc.org/google_popup.php?cid=650', location: { label: 'New York, NY', latitude: 40.7608, longitude: -74.0021 } },
+    { id: 'dot-sf-bay-bridge', name: 'SF Bay Bridge', source: 'dot_traffic', is_live: true, stream_url: 'https://cwwp2.dot.ca.gov/vm/streamlist.htm', location: { label: 'San Francisco, CA', latitude: 37.7983, longitude: -122.3778 } },
+    { id: 'dot-la-i405', name: 'LA I-405 Freeway', source: 'dot_traffic', is_live: true, stream_url: 'https://cwwp2.dot.ca.gov/vm/streamlist.htm', location: { label: 'Los Angeles, CA', latitude: 33.9800, longitude: -118.3900 } },
+    { id: 'dot-chi-i90', name: 'Chicago I-90/94', source: 'dot_traffic', is_live: true, stream_url: 'https://www.travelmidwest.com/', location: { label: 'Chicago, IL', latitude: 41.8827, longitude: -87.6233 } },
+    // Weather cams
+    { id: 'wx-radar-us', name: 'US Weather Radar', source: 'weather', is_live: true, embed_url: 'https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=default&metricTemp=default&metricWind=default&zoom=4&overlay=radar&product=radar&level=surface&lat=39&lon=-96&pressure=true&message=true', stream_url: 'https://www.windy.com/', location: { label: 'United States', latitude: 39.8283, longitude: -98.5795 } },
+    { id: 'wx-windy-global', name: 'Windy Global Wind Map', source: 'weather', is_live: true, embed_url: 'https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=default&metricTemp=default&metricWind=default&zoom=3&overlay=wind&product=ecmwf&level=surface&lat=30&lon=0', stream_url: 'https://www.windy.com/', location: { label: 'Global', latitude: 30, longitude: 0 } },
+    { id: 'wx-hurricane-tracker', name: 'Hurricane Tracker', source: 'weather', is_live: true, embed_url: 'https://embed.windy.com/embed.html?type=map&location=coordinates&metricRain=default&metricTemp=default&metricWind=default&zoom=4&overlay=wind&product=ecmwf&level=surface&lat=25&lon=-75', stream_url: 'https://www.windy.com/', location: { label: 'Atlantic Basin', latitude: 25, longitude: -75 } },
   ];
 }
 
