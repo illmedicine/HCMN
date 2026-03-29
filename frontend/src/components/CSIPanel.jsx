@@ -47,9 +47,28 @@ export default function CSIPanel() {
   const [chatLoading, setChatLoading] = useState(false);
 
   const canvasRef = useRef(null);
+  const canvasSizeRef = useRef({ w: 0, h: 0 });
   const signalCanvasRef = useRef(null);
   const autoRef = useRef(null);
   const chatEndRef = useRef(null);
+
+  // Stable canvas sizing — only update dimensions on actual resize, not every draw
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          canvasSizeRef.current = { w: width, h: height };
+          canvas.width = width * window.devicePixelRatio;
+          canvas.height = height * window.devicePixelRatio;
+        }
+      }
+    });
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
 
   // ───────────────────────── FLOOR PLAN RENDERER ─────────────────────────
   const drawLayout = useCallback(() => {
@@ -57,12 +76,9 @@ export default function CSIPanel() {
     if (!canvas || !layout) return;
 
     const ctx = canvas.getContext('2d');
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * window.devicePixelRatio;
-    canvas.height = rect.height * window.devicePixelRatio;
-    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-    const w = rect.width;
-    const h = rect.height;
+    const { w, h } = canvasSizeRef.current;
+    if (w === 0 || h === 0) return;
+    ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
 
     ctx.fillStyle = '#0a0e17';
     ctx.fillRect(0, 0, w, h);
@@ -274,34 +290,62 @@ export default function CSIPanel() {
       });
     }
 
-    // ── Per-room presence ──
-    if (showPresence && presence?.per_room && layout.rooms) {
-      presence.per_room.forEach(rp => {
-        if (rp.occupancy <= 0) return;
-        const room = layout.rooms.find(r => r.id === rp.room);
-        if (!room) return;
-        const px = tx(room.x + room.w / 2) + Math.sin(Date.now() / 800) * 8;
-        const py = ty(room.y + 1.2);
+    // ── Per-person presence (individual icons at actual positions) ──
+    if (showPresence && presence?.persons && presence.persons.length > 0) {
+      const PERSON_ICONS = {
+        person_walking: '🚶',
+        person_sitting: '🪑',
+        person_standing: '🧍',
+        sleeping: '😴',
+      };
+      const ACTIVITY_COLORS = {
+        person_walking: '#f59e0b',
+        person_sitting: '#3b82f6',
+        person_standing: '#10b981',
+        sleeping: '#8b5cf6',
+      };
+      presence.persons.forEach(p => {
+        const px = tx(p.x);
+        const py = ty(p.y);
+        const color = ACTIVITY_COLORS[p.activity] || '#f59e0b';
 
-        // Presence glow
-        const glow = ctx.createRadialGradient(px, py, 0, px, py, 18);
-        glow.addColorStop(0, rp.occupancy > 1 ? 'rgba(239,68,68,0.35)' : 'rgba(245,158,11,0.3)');
-        glow.addColorStop(1, 'transparent');
-        ctx.fillStyle = glow;
+        // Glow ring
+        const glow = ctx.createRadialGradient(px, py, 0, px, py, 22);
+        glow.addColorStop(0, color.replace(')', ', 0.35)').replace('#', 'rgba(') || `rgba(245,158,11,0.3)`);
+        // Parse hex to rgba
+        const r = parseInt(color.slice(1, 3), 16);
+        const g = parseInt(color.slice(3, 5), 16);
+        const b = parseInt(color.slice(5, 7), 16);
+        const glow2 = ctx.createRadialGradient(px, py, 0, px, py, 22);
+        glow2.addColorStop(0, `rgba(${r},${g},${b},0.35)`);
+        glow2.addColorStop(1, 'transparent');
+        ctx.fillStyle = glow2;
         ctx.beginPath();
-        ctx.arc(px, py, 18, 0, Math.PI * 2);
+        ctx.arc(px, py, 22, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.font = '16px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(rp.occupancy > 1 ? '👥' : '👤', px, py + 5);
+        // Outer ring pulse
+        const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 600 + p.x);
+        ctx.strokeStyle = `rgba(${r},${g},${b},${0.3 * pulse})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(px, py, 18 + pulse * 6, 0, Math.PI * 2);
+        ctx.stroke();
 
-        ctx.fillStyle = rp.occupancy > 1 ? '#ef4444' : '#f59e0b';
+        // Icon
+        const icon = PERSON_ICONS[p.activity] || '👤';
+        ctx.font = '18px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(icon, px, py + 6);
+
+        // Label
+        ctx.fillStyle = `rgba(${r},${g},${b},1)`;
         ctx.font = 'bold 8px monospace';
-        ctx.fillText(ACTIVITY_LABELS[rp.activity]?.split(' ').pop() || rp.activity, px, py + 20);
-        ctx.fillStyle = '#64748b';
+        const actLabel = ACTIVITY_LABELS[p.activity]?.split(' ').pop() || p.activity;
+        ctx.fillText(actLabel, px, py + 22);
+        ctx.fillStyle = '#94a3b8';
         ctx.font = '7px monospace';
-        ctx.fillText(`${(rp.confidence * 100).toFixed(0)}% conf`, px, py + 30);
+        ctx.fillText(p.label, px, py + 31);
       });
     }
 
@@ -385,6 +429,13 @@ export default function CSIPanel() {
 
   // ───────────────────────── EFFECTS ─────────────────────────
   useEffect(() => { drawLayout(); }, [drawLayout]);
+  // Repaint at ~20fps for smooth person icon animation
+  useEffect(() => {
+    let raf;
+    function tick() { drawLayout(); raf = requestAnimationFrame(tick); }
+    if (presence?.persons?.length) { raf = requestAnimationFrame(tick); }
+    return () => cancelAnimationFrame(raf);
+  }, [drawLayout, presence]);
   useEffect(() => { drawSignalHistory(); }, [drawSignalHistory]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages]);
 
@@ -503,10 +554,9 @@ export default function CSIPanel() {
   }
 
   function popOutModule() {
-    const pw = window.open('', '_blank', 'width=1200,height=800,menubar=no,toolbar=no');
-    if (!pw) return;
-    pw.document.title = 'HCMN – Wi-Fi CSI Module';
-    pw.document.body.innerHTML = '<div style="background:#0a0e17;color:#e2e8f0;height:100vh;display:flex;align-items:center;justify-content:center;font-family:sans-serif"><h2>Module 3 – Wi-Fi CSI Sensing</h2><p>Pop-out window active.</p></div>';
+    const base = window.location.origin + (window.location.pathname.replace(/\/[^/]*$/, '') || '');
+    const url = `${base}/?module=csi`;
+    window.open(url, 'hcmn-csi', 'width=1400,height=900,menubar=no,toolbar=no,location=no');
   }
 
   // ───────────────────────── DERIVED DATA ─────────────────────────
@@ -675,6 +725,73 @@ export default function CSIPanel() {
               </table>
             </div>
           </div>
+
+          {/* Real-Time Detection Stats */}
+          {presence && (
+            <div className="csi-card detection-stats-card">
+              <h3>📊 Real-Time Detection Status</h3>
+              <div className="detection-stats-grid">
+                <div className="detection-stat">
+                  <span className="detection-icon">👥</span>
+                  <span className="detection-val">{presence.occupancy_count}</span>
+                  <span className="detection-lbl">Total Persons</span>
+                </div>
+                <div className="detection-stat">
+                  <span className="detection-icon">🚶</span>
+                  <span className="detection-val">{presence.activity_counts?.walking || 0}</span>
+                  <span className="detection-lbl">Walking</span>
+                </div>
+                <div className="detection-stat">
+                  <span className="detection-icon">🪑</span>
+                  <span className="detection-val">{presence.activity_counts?.sitting || 0}</span>
+                  <span className="detection-lbl">Sitting</span>
+                </div>
+                <div className="detection-stat">
+                  <span className="detection-icon">🧍</span>
+                  <span className="detection-val">{presence.activity_counts?.standing || 0}</span>
+                  <span className="detection-lbl">Standing</span>
+                </div>
+                <div className="detection-stat">
+                  <span className="detection-icon">😴</span>
+                  <span className="detection-val">{presence.activity_counts?.sleeping || 0}</span>
+                  <span className="detection-lbl">Sleeping</span>
+                </div>
+                <div className="detection-stat">
+                  <span className="detection-icon">🛋️</span>
+                  <span className="detection-val">{presence.furniture_detected?.length || 0}</span>
+                  <span className="detection-lbl">Objects Detected</span>
+                </div>
+              </div>
+              {presence.persons?.length > 0 && (
+                <div className="person-tracking-list">
+                  <h4>Tracked Individuals</h4>
+                  {presence.persons.map(p => (
+                    <div key={p.id} className="person-track-row">
+                      <span className="person-track-icon">
+                        {p.activity === 'person_walking' ? '🚶' : p.activity === 'person_sitting' ? '🪑' : p.activity === 'person_standing' ? '🧍' : p.activity === 'sleeping' ? '😴' : '👤'}
+                      </span>
+                      <span className="person-track-label">{p.label}</span>
+                      <span className="person-track-room">{layout?.rooms?.find(r => r.id === p.room)?.label || p.room}</span>
+                      <span className="person-track-activity">{ACTIVITY_LABELS[p.activity]?.split(' ').pop() || p.activity}</span>
+                      <span className="person-track-conf">{(p.confidence * 100).toFixed(0)}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {presence.furniture_detected?.length > 0 && (
+                <div className="furniture-detection-list">
+                  <h4>Furniture & Object Detection</h4>
+                  <div className="furniture-chips">
+                    {presence.furniture_detected.map((f, i) => (
+                      <span key={i} className="furniture-chip">
+                        {f.label} <span className="furniture-conf">{(f.confidence * 100).toFixed(0)}%</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Presence Detection */}
           <div className="csi-card presence-card">

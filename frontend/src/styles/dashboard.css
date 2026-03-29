@@ -838,8 +838,7 @@ body {
 
 .room-layout-canvas {
   width: 100%;
-  height: 100%;
-  min-height: 300px;
+  height: 420px;
   border-radius: 0.375rem;
 }
 
@@ -1131,6 +1130,111 @@ body {
   flex: 1;
   max-height: 200px;
   overflow-y: auto;
+}
+
+/* Detection Stats Cards */
+.detection-stats-card {
+  border-left: 3px solid var(--accent-amber);
+}
+.detection-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.detection-stat {
+  background: var(--bg-secondary);
+  border-radius: 0.375rem;
+  padding: 0.6rem 0.4rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+}
+.detection-icon {
+  font-size: 1.2rem;
+}
+.detection-val {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+}
+.detection-lbl {
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* Person Tracking List */
+.person-tracking-list {
+  margin-top: 0.5rem;
+}
+.person-tracking-list h4,
+.furniture-detection-list h4 {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 0.4rem;
+  letter-spacing: 0.03em;
+}
+.person-track-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--bg-secondary);
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+.person-track-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.person-track-label {
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 60px;
+}
+.person-track-room {
+  color: var(--text-secondary);
+  flex: 1;
+}
+.person-track-activity {
+  color: var(--accent-amber);
+  font-weight: 500;
+}
+.person-track-conf {
+  font-family: monospace;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+/* Furniture Detection */
+.furniture-detection-list {
+  margin-top: 0.5rem;
+}
+.furniture-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.furniture-chip {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+.furniture-conf {
+  font-family: monospace;
+  font-size: 0.6rem;
+  color: var(--accent-green);
+  margin-left: 0.2rem;
 }
 
 /* ================================================================

@@ -175,21 +175,133 @@ function demoPrediction() {
   return { prediction: pred, confidence: 0.55 + Math.random() * 0.4 };
 }
 
-function demoPresence() {
-  const count = Math.floor(Math.random() * 4);
-  const rooms = ['living_room', 'master_bedroom', 'office', 'kitchen', 'hallway', 'bathroom', 'kids_room'];
-  const activeRooms = rooms.slice(0, Math.max(1, count)).map(r => ({
-    room: r,
-    occupancy: r === rooms[0] ? Math.min(count, 2) : (Math.random() > 0.5 ? 1 : 0),
-    activity: ['idle', 'light_movement', 'active', 'sleeping'][Math.floor(Math.random() * 4)],
-    confidence: 0.6 + Math.random() * 0.35,
-    last_motion_sec: Math.floor(Math.random() * 300),
-  }));
+// Persistent person state for smooth movement simulation
+let _personState = null;
+function _initPersonState() {
+  // Room center coords for navigation
+  const roomCenters = {
+    living_room: { x: 3, y: 2.5 },
+    kitchen: { x: 13, y: 2.5 },
+    office: { x: 8, y: 2.5 },
+    hallway: { x: 3, y: 6 },
+    master_bedroom: { x: 3, y: 9.5 },
+    bathroom: { x: 8, y: 9.5 },
+    kids_room: { x: 13, y: 9.5 },
+    dining: { x: 13, y: 6 },
+  };
+  const roomOrder = ['office', 'hallway', 'living_room', 'hallway', 'kitchen', 'dining', 'hallway', 'master_bedroom', 'bathroom', 'hallway', 'office'];
   return {
-    occupancy_count: count,
-    activity: count === 0 ? 'none' : count === 1 ? 'light_movement' : 'active',
-    zone: rooms[Math.floor(Math.random() * rooms.length)],
-    per_room: activeRooms,
+    persons: [
+      { id: 'person-1', label: 'Person A', room: 'office', activity: 'person_sitting', x: 8, y: 2.5, targetRoom: null, pathIdx: 3, moveTimer: 0, pattern: 'primary_user' },
+      { id: 'person-2', label: 'Person B', room: 'living_room', activity: 'person_sitting', x: 2.5, y: 3, targetRoom: null, pathIdx: 0, moveTimer: 0, pattern: 'secondary_user' },
+    ],
+    roomCenters,
+    roomOrder,
+    tick: 0,
+  };
+}
+
+function demoPresence() {
+  if (!_personState) _personState = _initPersonState();
+  const st = _personState;
+  st.tick++;
+
+  const activities = ['person_walking', 'person_sitting', 'person_standing', 'sleeping'];
+  const rc = st.roomCenters;
+
+  // Simulate person movement every few ticks
+  st.persons.forEach(p => {
+    p.moveTimer++;
+    // Every 4-8 ticks, possibly change activity or move
+    if (p.moveTimer > 3 + Math.floor(Math.random() * 5)) {
+      p.moveTimer = 0;
+      const doMove = Math.random() > 0.5;
+      if (doMove) {
+        // Move to next room in path
+        p.pathIdx = (p.pathIdx + 1) % st.roomOrder.length;
+        const nextRoom = st.roomOrder[p.pathIdx];
+        p.targetRoom = nextRoom;
+        p.activity = 'person_walking';
+      } else {
+        // Change activity in place
+        p.activity = activities[Math.floor(Math.random() * activities.length)];
+        p.targetRoom = null;
+      }
+    }
+
+    // Smooth movement toward target
+    if (p.targetRoom && rc[p.targetRoom]) {
+      const target = rc[p.targetRoom];
+      const dx = target.x - p.x;
+      const dy = target.y - p.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 0.5) {
+        p.room = p.targetRoom;
+        p.x = target.x + (Math.random() - 0.5) * 1.5;
+        p.y = target.y + (Math.random() - 0.5) * 1.5;
+        p.targetRoom = null;
+        p.activity = activities[1 + Math.floor(Math.random() * 2)]; // sitting or standing
+      } else {
+        const speed = 0.8 + Math.random() * 0.4;
+        p.x += (dx / dist) * speed;
+        p.y += (dy / dist) * speed;
+        p.activity = 'person_walking';
+        // Update room based on closest
+        let bestRoom = p.room;
+        let bestDist = Infinity;
+        for (const [rid, c] of Object.entries(rc)) {
+          const d = Math.sqrt((p.x - c.x) ** 2 + (p.y - c.y) ** 2);
+          if (d < bestDist) { bestDist = d; bestRoom = rid; }
+        }
+        p.room = bestRoom;
+      }
+    } else {
+      // Idle wiggle
+      p.x += (Math.random() - 0.5) * 0.15;
+      p.y += (Math.random() - 0.5) * 0.15;
+    }
+  });
+
+  // Build per-room summary
+  const roomMap = {};
+  st.persons.forEach(p => {
+    if (!roomMap[p.room]) roomMap[p.room] = { room: p.room, occupancy: 0, activity: p.activity, confidence: 0.7 + Math.random() * 0.25, persons: [] };
+    roomMap[p.room].occupancy++;
+    roomMap[p.room].persons.push({ id: p.id, label: p.label, x: p.x, y: p.y, activity: p.activity, pattern: p.pattern });
+  });
+  const perRoom = Object.values(roomMap);
+  // Add empty rooms
+  for (const rid of Object.keys(rc)) {
+    if (!roomMap[rid]) perRoom.push({ room: rid, occupancy: 0, activity: 'empty', confidence: 0.9, persons: [] });
+  }
+
+  const allPersons = st.persons.map(p => ({ id: p.id, label: p.label, room: p.room, x: p.x, y: p.y, activity: p.activity, pattern: p.pattern, confidence: 0.65 + Math.random() * 0.3 }));
+
+  // Count activities
+  const activityCounts = { walking: 0, sitting: 0, standing: 0, sleeping: 0 };
+  allPersons.forEach(p => {
+    if (p.activity === 'person_walking') activityCounts.walking++;
+    else if (p.activity === 'person_sitting') activityCounts.sitting++;
+    else if (p.activity === 'person_standing') activityCounts.standing++;
+    else if (p.activity === 'sleeping') activityCounts.sleeping++;
+  });
+
+  return {
+    occupancy_count: st.persons.length,
+    activity: st.persons.length === 0 ? 'none' : st.persons.length === 1 ? st.persons[0].activity : 'multiple_people',
+    zone: st.persons[0]?.room || 'unknown',
+    per_room: perRoom,
+    persons: allPersons,
+    activity_counts: activityCounts,
+    furniture_detected: [
+      { type: 'couch', room: 'living_room', label: 'Couch', confidence: 0.92 },
+      { type: 'tv', room: 'living_room', label: 'Smart TV (active)', confidence: 0.88 },
+      { type: 'bed', room: 'master_bedroom', label: 'Bed', confidence: 0.95 },
+      { type: 'desk', room: 'office', label: 'Office Desk', confidence: 0.90 },
+      { type: 'monitor', room: 'office', label: 'Monitor (active)', confidence: 0.85 },
+      { type: 'fridge', room: 'kitchen', label: 'Smart Fridge', confidence: 0.93 },
+      { type: 'table', room: 'dining', label: 'Dining Table', confidence: 0.87 },
+    ],
   };
 }
 
@@ -874,7 +986,7 @@ export async function getGlobeSatellites() {
 
 export async function getGlobeConfig() {
   try { return await tryFetch(`${API_BASE}/globe/config`); }
-  catch { return { apiKey: '', configured: false, requiredAPIs: [] }; }
+  catch { return { apiKey: 'AIzaSyByYF-eH9ncPgM3gp6uELS_px2xZV_cqLU', configured: true, requiredAPIs: [] }; }
 }
 
 export async function setGlobeApiKey(apiKey) {

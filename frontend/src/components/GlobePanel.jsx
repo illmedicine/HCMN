@@ -103,7 +103,7 @@ export default function GlobePanel() {
 
     // setOptions can only be called once per page load
     if (!gmpConfigured) {
-      gmpSetOptions({ key: activeKey });
+      gmpSetOptions({ key: activeKey, v: 'alpha' });
       gmpConfigured = true;
     }
 
