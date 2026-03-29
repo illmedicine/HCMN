@@ -4,7 +4,6 @@ import { fetchLiveAircraft, fetchTLEs } from '../services/api';
 /* ---------- CesiumJS + resium ---------- */
 import * as Cesium from 'cesium';
 import { Viewer, Entity, PolylineGraphics, LabelGraphics, PointGraphics } from 'resium';
-import 'cesium/Build/Cesium/Widgets/widgets.css';
 
 /* ---------- satellite.js for TLE propagation ---------- */
 import * as satellite from 'satellite.js';

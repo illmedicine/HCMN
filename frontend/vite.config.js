@@ -19,7 +19,7 @@ function spa404Plugin() {
 
 export default defineConfig({
   base: '/HCMN/',
-  plugins: [react(), cesium(), spa404Plugin()],
+  plugins: [react(), cesium({ rebuildCesium: true }), spa404Plugin()],
   resolve: {
     alias: {
       'satellite.js': resolve('node_modules/satellite.js/dist/satellite.es.js'),

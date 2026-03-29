@@ -177,27 +177,113 @@ function demoPrediction() {
 
 function demoPresence() {
   const count = Math.floor(Math.random() * 4);
+  const rooms = ['living_room', 'master_bedroom', 'office', 'kitchen', 'hallway', 'bathroom', 'kids_room'];
+  const activeRooms = rooms.slice(0, Math.max(1, count)).map(r => ({
+    room: r,
+    occupancy: r === rooms[0] ? Math.min(count, 2) : (Math.random() > 0.5 ? 1 : 0),
+    activity: ['idle', 'light_movement', 'active', 'sleeping'][Math.floor(Math.random() * 4)],
+    confidence: 0.6 + Math.random() * 0.35,
+    last_motion_sec: Math.floor(Math.random() * 300),
+  }));
   return {
     occupancy_count: count,
     activity: count === 0 ? 'none' : count === 1 ? 'light_movement' : 'active',
-    zone: ['living_room', 'office', 'hallway', 'bedroom'][Math.floor(Math.random() * 4)],
+    zone: rooms[Math.floor(Math.random() * rooms.length)],
+    per_room: activeRooms,
   };
 }
 
 function demoLayout() {
   return {
-    width_m: 8, height_m: 6,
+    width_m: 16, height_m: 12,
+    // Outer walls
     walls: [
-      { x1: 0, y1: 0, x2: 8, y2: 0 },
-      { x1: 8, y1: 0, x2: 8, y2: 6 },
-      { x1: 8, y1: 6, x2: 0, y2: 6 },
-      { x1: 0, y1: 6, x2: 0, y2: 0 },
-      { x1: 5, y1: 0, x2: 5, y2: 3.5 },
+      { x1: 0, y1: 0, x2: 16, y2: 0 },
+      { x1: 16, y1: 0, x2: 16, y2: 12 },
+      { x1: 16, y1: 12, x2: 0, y2: 12 },
+      { x1: 0, y1: 12, x2: 0, y2: 0 },
+      // Interior walls
+      { x1: 6, y1: 0, x2: 6, y2: 5 },      // living/hallway divider
+      { x1: 6, y1: 5, x2: 0, y2: 5 },       // hallway top
+      { x1: 0, y1: 7, x2: 6, y2: 7 },       // hallway bottom
+      { x1: 6, y1: 7, x2: 6, y2: 12 },      // master bedroom left
+      { x1: 10, y1: 0, x2: 10, y2: 5 },     // kitchen left
+      { x1: 10, y1: 5, x2: 16, y2: 5 },     // kitchen/office divider
+      { x1: 10, y1: 7, x2: 10, y2: 12 },    // bathroom/kids divider
+      { x1: 10, y1: 7, x2: 6, y2: 7 },      // bathroom top
+    ],
+    // Rooms with bounds for rendering
+    rooms: [
+      { id: 'living_room', label: 'Living Room', x: 0, y: 0, w: 6, h: 5, color: '#1a2744' },
+      { id: 'kitchen', label: 'Kitchen', x: 10, y: 0, w: 6, h: 5, color: '#1a3328' },
+      { id: 'office', label: 'Office', x: 6, y: 0, w: 4, h: 5, color: '#2a1a44' },
+      { id: 'hallway', label: 'Hallway', x: 0, y: 5, w: 6, h: 2, color: '#1e293b' },
+      { id: 'master_bedroom', label: 'Master Bedroom', x: 0, y: 7, w: 6, h: 5, color: '#1a2744' },
+      { id: 'bathroom', label: 'Bathroom', x: 6, y: 7, w: 4, h: 5, color: '#0f3042' },
+      { id: 'kids_room', label: "Kid's Room", x: 10, y: 7, w: 6, h: 5, color: '#2a1a44' },
+      { id: 'dining', label: 'Dining Area', x: 10, y: 5, w: 6, h: 2, color: '#1a3328' },
+    ],
+    // Furniture items positioned in rooms
+    furniture: [
+      { room: 'living_room', type: 'couch', label: 'Couch', x: 1.5, y: 2.5, w: 3, h: 1, icon: '🛋' },
+      { room: 'living_room', type: 'tv', label: 'Smart TV', x: 3, y: 0.5, w: 2, h: 0.3, icon: '📺' },
+      { room: 'living_room', type: 'table', label: 'Coffee Table', x: 2, y: 1.6, w: 1.5, h: 0.8, icon: '' },
+      { room: 'kitchen', type: 'counter', label: 'Counter', x: 11, y: 0.5, w: 4.5, h: 0.8, icon: '' },
+      { room: 'kitchen', type: 'fridge', label: 'Smart Fridge', x: 15, y: 1.5, w: 0.8, h: 1, icon: '🧊' },
+      { room: 'kitchen', type: 'stove', label: 'Stove', x: 13, y: 0.5, w: 1, h: 0.8, icon: '' },
+      { room: 'office', type: 'desk', label: 'Desk', x: 7, y: 1, w: 2, h: 1, icon: '🖥' },
+      { room: 'office', type: 'chair', label: 'Chair', x: 7.8, y: 2.2, w: 0.8, h: 0.8, icon: '' },
+      { room: 'master_bedroom', type: 'bed', label: 'Bed', x: 1.5, y: 9, w: 3, h: 2.2, icon: '🛏' },
+      { room: 'master_bedroom', type: 'dresser', label: 'Dresser', x: 5, y: 8, w: 0.8, h: 1.5, icon: '' },
+      { room: 'master_bedroom', type: 'nightstand', label: 'Nightstand', x: 0.3, y: 9.5, w: 0.7, h: 0.5, icon: '' },
+      { room: 'kids_room', type: 'bed', label: "Kid's Bed", x: 11, y: 9, w: 2, h: 1.8, icon: '🛏' },
+      { room: 'kids_room', type: 'desk', label: 'Study Desk', x: 14, y: 8, w: 1.5, h: 1, icon: '📚' },
+      { room: 'bathroom', type: 'tub', label: 'Bathtub', x: 6.5, y: 9.5, w: 1.8, h: 1, icon: '🛁' },
+      { room: 'bathroom', type: 'sink', label: 'Sink', x: 9, y: 8, w: 0.6, h: 0.5, icon: '' },
+      { room: 'dining', type: 'table', label: 'Dining Table', x: 12, y: 5.3, w: 2, h: 1.2, icon: '' },
+    ],
+    // Doors / openings
+    doors: [
+      { x: 2, y: 5, dir: 'h', room1: 'living_room', room2: 'hallway' },
+      { x: 8, y: 5, dir: 'h', room1: 'office', room2: 'bathroom' },
+      { x: 2, y: 7, dir: 'h', room1: 'hallway', room2: 'master_bedroom' },
+      { x: 6, y: 2, dir: 'v', room1: 'living_room', room2: 'office' },
+      { x: 10, y: 2, dir: 'v', room1: 'office', room2: 'kitchen' },
+      { x: 10, y: 9, dir: 'v', room1: 'bathroom', room2: 'kids_room' },
+      { x: 13, y: 5, dir: 'h', room1: 'kitchen', room2: 'dining' },
+    ],
+    // WiFi access points / routers
+    access_points: [
+      { id: 'router-main', label: 'Main Router', x: 8, y: 3, band: '2.4/5 GHz', channel: 6, ssid: 'HomeNetwork' },
+      { id: 'ap-ext', label: 'Range Extender', x: 3, y: 9, band: '5 GHz', channel: 36, ssid: 'HomeNetwork-5G' },
+    ],
+    // Connected network devices with positions inferred from signal strength
+    devices: [
+      { id: 'dev-1', name: 'iPhone 15 Pro', type: 'phone', ip: '192.168.1.101', mac: 'A4:83:E7:2F:00:11', room: 'living_room', x: 2, y: 3, signal_dbm: -42, band: '5 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-2', name: 'MacBook Pro', type: 'laptop', ip: '192.168.1.102', mac: 'A4:83:E7:2F:00:22', room: 'office', x: 7.5, y: 1.5, signal_dbm: -38, band: '5 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-3', name: 'Samsung Smart TV', type: 'smart_tv', ip: '192.168.1.103', mac: 'B8:27:EB:AA:00:33', room: 'living_room', x: 3, y: 0.8, signal_dbm: -45, band: '2.4 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-4', name: 'Echo Dot (Bedroom)', type: 'smart_speaker', ip: '192.168.1.104', mac: 'FC:65:DE:CC:00:44', room: 'master_bedroom', x: 0.5, y: 9.8, signal_dbm: -58, band: '2.4 GHz', connected_ap: 'ap-ext', online: true },
+      { id: 'dev-5', name: 'iPad Air', type: 'tablet', ip: '192.168.1.105', mac: 'A4:83:E7:2F:00:55', room: 'kids_room', x: 14.5, y: 8.5, signal_dbm: -52, band: '5 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-6', name: 'Smart Thermostat', type: 'iot', ip: '192.168.1.106', mac: '18:B4:30:EE:00:66', room: 'hallway', x: 4, y: 6, signal_dbm: -50, band: '2.4 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-7', name: 'Ring Doorbell', type: 'camera', ip: '192.168.1.107', mac: 'D4:73:D7:FF:00:77', room: 'hallway', x: 0.2, y: 6, signal_dbm: -62, band: '2.4 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-8', name: 'LG Smart Fridge', type: 'iot', ip: '192.168.1.108', mac: 'CC:50:E3:BB:00:88', room: 'kitchen', x: 15.2, y: 1.8, signal_dbm: -48, band: '2.4 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-9', name: 'PlayStation 5', type: 'console', ip: '192.168.1.109', mac: 'A8:E3:EE:DD:00:99', room: 'living_room', x: 4.5, y: 0.6, signal_dbm: -40, band: '5 GHz', connected_ap: 'router-main', online: false },
+      { id: 'dev-10', name: 'Work Laptop', type: 'laptop', ip: '192.168.1.110', mac: '00:1A:2B:CC:00:AA', room: 'office', x: 7.2, y: 1.3, signal_dbm: -36, band: '5 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-11', name: 'Smart Plug (Lamp)', type: 'iot', ip: '192.168.1.111', mac: '68:C6:3A:DD:00:BB', room: 'master_bedroom', x: 5.2, y: 8.5, signal_dbm: -55, band: '2.4 GHz', connected_ap: 'ap-ext', online: true },
+      { id: 'dev-12', name: 'Roomba i7', type: 'iot', ip: '192.168.1.112', mac: '50:14:79:EE:00:CC', room: 'hallway', x: 3, y: 5.5, signal_dbm: -47, band: '2.4 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-13', name: 'Google Pixel Watch', type: 'wearable', ip: '192.168.1.113', mac: 'DC:A6:32:FF:00:DD', room: 'master_bedroom', x: 1, y: 10, signal_dbm: -60, band: '2.4 GHz', connected_ap: 'ap-ext', online: true },
+      { id: 'dev-14', name: 'HP Printer', type: 'printer', ip: '192.168.1.114', mac: '3C:D9:2B:11:00:EE', room: 'office', x: 9, y: 3.5, signal_dbm: -44, band: '2.4 GHz', connected_ap: 'router-main', online: true },
+      { id: 'dev-15', name: 'Baby Monitor Cam', type: 'camera', ip: '192.168.1.115', mac: '00:1E:C2:22:00:FF', room: 'kids_room', x: 13, y: 10, signal_dbm: -56, band: '2.4 GHz', connected_ap: 'router-main', online: true },
     ],
     zones: [
-      { center_x: 2.5, center_y: 3, radius_m: 2.2, label: 'Living Area' },
-      { center_x: 6.5, center_y: 1.5, radius_m: 1.4, label: 'Office' },
-      { center_x: 6.5, center_y: 4.5, radius_m: 1.3, label: 'Kitchen' },
+      { center_x: 3, center_y: 2.5, radius_m: 2.5, label: 'Living Room' },
+      { center_x: 8, center_y: 2.5, radius_m: 1.8, label: 'Office' },
+      { center_x: 13, center_y: 2.5, radius_m: 2.5, label: 'Kitchen' },
+      { center_x: 3, center_y: 6, radius_m: 1, label: 'Hallway' },
+      { center_x: 3, center_y: 9.5, radius_m: 2.5, label: 'Master Bedroom' },
+      { center_x: 8, center_y: 9.5, radius_m: 1.8, label: 'Bathroom' },
+      { center_x: 13, center_y: 9.5, radius_m: 2.5, label: "Kid's Room" },
+      { center_x: 13, center_y: 6, radius_m: 1.5, label: 'Dining Area' },
     ],
   };
 }
@@ -440,5 +526,13 @@ export async function getRoomLayout() {
     return await tryFetch(`${API_BASE}/csi/layout`);
   } catch {
     return demoLayout();
+  }
+}
+
+export async function getNetworkDevices() {
+  try {
+    return await tryFetch(`${API_BASE}/csi/devices`);
+  } catch {
+    return demoLayout().devices;
   }
 }
